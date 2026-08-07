@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Local databases — these contain real data in any non-demo use.
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets. .env holds the root key; it must never be committed.
+.env
