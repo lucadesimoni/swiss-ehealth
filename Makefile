@@ -5,6 +5,10 @@ VENV := .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
+# Exported to every recipe so the targets work in a plain checkout, not only
+# after `make install`. Matches the pythonpath pytest already uses.
+export PYTHONPATH := src
+
 install:
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
