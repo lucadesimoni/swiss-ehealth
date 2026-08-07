@@ -16,12 +16,17 @@ from sqlalchemy import select
 
 from ehealth.api.deps import ContainerDep, CurrentUserDep, DbDep
 from ehealth.api.routes_auth import AdminKeyDep
-from ehealth.api.schemas import AuditEventOut, ChainVerificationOut, RevisionOut
+from ehealth.api.schemas import (
+    AuditEventOut,
+    ChainVerificationOut,
+    LedgerVerificationOut,
+    RevisionOut,
+)
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditEvent
 from ehealth.security.crypto import SIGNATURE_ALGORITHMS
 from ehealth.security.tokens import Scope
-from ehealth.services.audit import PAYLOAD_BUILDERS
+from ehealth.services.audit import GLOBAL_CHAIN, PAYLOAD_BUILDERS
 from ehealth.version import release_identity
 
 router = APIRouter(tags=["audit"])
@@ -44,6 +49,7 @@ def _event_out(event: AuditEvent) -> AuditEventOut:
         token_jti=event.token_jti,
         detail=event.detail,
         entry_hash=event.entry_hash,
+        chain_id=event.chain_id,
         payload_version=event.payload_version,
         software_version=event.software_version,
     )
@@ -81,16 +87,53 @@ def own_audit_trail(
 def verify_chain(
     db: DbDep,
     container: ContainerDep,
+    chain_id: Annotated[str, Query(max_length=32)] = GLOBAL_CHAIN,
     start_seq: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int | None, Query(ge=1, le=100_000)] = None,
 ):
-    """Recompute the hash chain and every signature over a range."""
-    result = container.ledger.verify_chain(db, start_seq=start_seq, limit=limit)
+    """Recompute one chain's links and signatures.
+
+    ``chain_id`` is a dossier UID, or ``global`` for everything not scoped to
+    a patient. Verifying a single dossier is the question a patient actually
+    has ("was *my* record tampered with"), and it stays cheap however large
+    the system gets.
+    """
+    result = container.ledger.verify_chain(
+        db, chain_id, start_seq=start_seq, limit=limit
+    )
     return ChainVerificationOut(
         ok=result.ok,
         checked=result.checked,
         first_bad_seq=result.first_bad_seq,
         reason=result.reason,
+        chain_id=result.chain_id,
+    )
+
+
+@router.get(
+    "/audit/verify-all", response_model=LedgerVerificationOut, dependencies=[AdminKeyDep]
+)
+def verify_all(
+    db: DbDep,
+    container: ContainerDep,
+    max_chains: Annotated[int | None, Query(ge=1, le=100_000)] = None,
+):
+    """Verify every chain. A background job at scale, not a request."""
+    result = container.ledger.verify_all(db, max_chains=max_chains)
+    return LedgerVerificationOut(
+        ok=result.ok,
+        chains_checked=result.chains_checked,
+        events_checked=result.events_checked,
+        failures=[
+            ChainVerificationOut(
+                ok=f.ok,
+                checked=f.checked,
+                first_bad_seq=f.first_bad_seq,
+                reason=f.reason,
+                chain_id=f.chain_id,
+            )
+            for f in result.failures
+        ],
     )
 
 
@@ -115,14 +158,18 @@ def anchor_ledger(
         ) from exc
     return {
         "period": anchor.period,
-        "first_seq": anchor.first_seq,
-        "last_seq": anchor.last_seq,
-        "head_hash": anchor.head_hash,
+        # The value to publish externally. Once it is somewhere the operator
+        # cannot rewrite, everything up to it is frozen.
+        "anchor_hash": anchor.anchor_hash,
+        "merkle_root": anchor.merkle_root,
+        "previous_anchor_hash": anchor.previous_anchor_hash,
+        "chain_count": anchor.chain_count,
         "event_count": anchor.event_count,
         "signature": anchor.signature,
         "key_id": anchor.key_id,
         "algorithm": anchor.algorithm,
         "software_version": anchor.software_version,
+        "verified": container.ledger.verify_anchor(db, anchor),
     }
 
 

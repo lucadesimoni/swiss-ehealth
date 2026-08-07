@@ -10,10 +10,20 @@ import pytest
 from sqlalchemy import select
 
 from ehealth.db import utcnow
-from ehealth.models.audit import AuditAction, AuditEvent, AuditOutcome
+from ehealth.models.audit import (
+    AuditAction,
+    AuditEvent,
+    AuditOutcome,
+    LedgerAnchorChain,
+)
 from ehealth.models.core import PersonStatus
 from ehealth.security.crypto import GENESIS_HASH
-from ehealth.services.audit import ActorContext
+from ehealth.services.audit import (
+    GLOBAL_CHAIN,
+    ActorContext,
+    merkle_leaf,
+    merkle_root,
+)
 from ehealth.services.changelog import (
     ChangeTracker,
     diff_states,
@@ -111,33 +121,196 @@ class TestChain:
         assert result.checked == 3
 
 
-class TestAnchoring:
-    def test_seals_the_head_and_is_idempotent(self, ledger, db, system_actor):
-        for _ in range(3):
-            append(ledger, db, system_actor)
-        db.commit()
-        anchor = ledger.anchor(db, "2026-08-07")
-        again = ledger.anchor(db, "2026-08-07")
-        assert anchor.uid == again.uid
-        assert anchor.last_seq == 3
-        assert anchor.event_count == 3
+class TestPartitionedChains:
+    """One chain per dossier, so writes for different patients never contend."""
 
-    def test_second_period_covers_only_new_events(self, ledger, db, system_actor):
-        for _ in range(2):
-            append(ledger, db, system_actor)
-        db.commit()
-        ledger.anchor(db, "2026-08-07")
+    def test_dossier_events_go_to_their_own_chain(self, ledger, db, system_actor):
+        first = append(ledger, db, system_actor, dossier_uid="dos_A")
+        second = append(ledger, db, system_actor, dossier_uid="dos_B")
+        assert first.chain_id == "dos_A"
+        assert second.chain_id == "dos_B"
+        # Both are the first entry *of their own chain*.
+        assert first.seq == second.seq == 1
+
+    def test_non_dossier_events_go_to_the_global_chain(
+        self, ledger, db, system_actor
+    ):
+        assert append(ledger, db, system_actor).chain_id == GLOBAL_CHAIN
+
+    def test_each_chain_links_independently(self, ledger, db, system_actor):
+        a1 = append(ledger, db, system_actor, dossier_uid="dos_A")
+        append(ledger, db, system_actor, dossier_uid="dos_B")
+        a2 = append(ledger, db, system_actor, dossier_uid="dos_A")
+        assert a2.prev_hash == a1.entry_hash
+        assert a2.seq == 2
+
+    def test_tampering_with_one_chain_leaves_the_others_verifiable(
+        self, ledger, db, system_actor
+    ):
+        """Partitioning must not weaken detection — it localises it."""
         for _ in range(3):
-            append(ledger, db, system_actor)
+            append(ledger, db, system_actor, dossier_uid="dos_A")
+            append(ledger, db, system_actor, dossier_uid="dos_B")
+        db.commit()
+
+        target = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.chain_id == "dos_A", AuditEvent.seq == 2
+            )
+        ).scalars().one()
+        target.actor_uid = "per_someone_else_entirely_aaa"
+        db.commit()
+
+        assert not ledger.verify_chain(db, "dos_A").ok
+        assert ledger.verify_chain(db, "dos_B").ok
+
+        whole = ledger.verify_all(db)
+        assert not whole.ok
+        assert [f.chain_id for f in whole.failures] == ["dos_A"]
+
+    def test_verify_all_covers_every_chain(self, ledger, db, system_actor):
+        for name in ("dos_A", "dos_B", None):
+            for _ in range(2):
+                append(ledger, db, system_actor, dossier_uid=name)
+        db.commit()
+        result = ledger.verify_all(db)
+        assert result.ok
+        assert result.chains_checked == 3
+        assert result.events_checked == 6
+
+    def test_a_chain_id_is_inside_the_signature(self, ledger, db, system_actor):
+        """An entry cannot be replayed into a different chain and still
+        verify — that is what payload v2 added."""
+        append(ledger, db, system_actor, dossier_uid="dos_A")
+        db.commit()
+        event = db.execute(select(AuditEvent)).scalars().one()
+        assert event.payload_version == 2
+        event.chain_id = "dos_B"
+        db.commit()
+        assert not ledger.verify_chain(db, "dos_B").ok
+
+
+class TestAnchoring:
+    def test_seals_every_chain_that_moved(self, ledger, db, system_actor):
+        for name in ("dos_A", "dos_B"):
+            append(ledger, db, system_actor, dossier_uid=name)
+        append(ledger, db, system_actor)
+        db.commit()
+
+        anchor = ledger.anchor(db, "2026-08-07")
+        assert anchor.chain_count == 3
+        assert anchor.event_count == 3
+        assert len(anchor.merkle_root) == 64
+        assert ledger.verify_anchor(db, anchor)
+
+    def test_is_idempotent_per_period(self, ledger, db, system_actor):
+        append(ledger, db, system_actor)
+        db.commit()
+        first = ledger.anchor(db, "2026-08-07")
+        assert ledger.anchor(db, "2026-08-07").uid == first.uid
+
+    def test_anchors_form_their_own_chain(self, ledger, db, system_actor):
+        append(ledger, db, system_actor)
+        db.commit()
+        first = ledger.anchor(db, "2026-08-07")
+        append(ledger, db, system_actor)
         db.commit()
         second = ledger.anchor(db, "2026-08-08")
-        assert second.first_seq == 3
-        assert second.last_seq == 5
-        assert second.event_count == 3
+        assert second.previous_anchor_hash == first.anchor_hash
 
-    def test_refuses_to_anchor_an_empty_ledger(self, ledger, db):
-        with pytest.raises(ValueError, match="empty"):
+    def test_a_second_anchor_covers_only_new_events(
+        self, ledger, db, system_actor
+    ):
+        append(ledger, db, system_actor, dossier_uid="dos_A")
+        db.commit()
+        ledger.anchor(db, "2026-08-07")
+
+        append(ledger, db, system_actor, dossier_uid="dos_A")
+        append(ledger, db, system_actor, dossier_uid="dos_B")
+        db.commit()
+        second = ledger.anchor(db, "2026-08-08")
+        # dos_A moved by one, dos_B is new with one. The quiet global chain is
+        # not re-checkpointed.
+        assert second.chain_count == 2
+        assert second.event_count == 2
+
+    def test_a_quiet_chain_is_not_re_anchored(self, ledger, db, system_actor):
+        append(ledger, db, system_actor, dossier_uid="dos_A")
+        db.commit()
+        ledger.anchor(db, "2026-08-07")
+        append(ledger, db, system_actor, dossier_uid="dos_B")
+        db.commit()
+        second = ledger.anchor(db, "2026-08-08")
+        chains = db.execute(
+            select(LedgerAnchorChain).where(
+                LedgerAnchorChain.anchor_uid == second.uid
+            )
+        ).scalars().all()
+        assert [c.chain_id for c in chains] == ["dos_B"]
+
+    def test_detects_a_rewritten_checkpoint(self, ledger, db, system_actor):
+        append(ledger, db, system_actor)
+        db.commit()
+        anchor = ledger.anchor(db, "2026-08-07")
+        db.commit()
+        assert ledger.verify_anchor(db, anchor)
+
+        checkpoint = db.execute(
+            select(LedgerAnchorChain).where(
+                LedgerAnchorChain.anchor_uid == anchor.uid
+            )
+        ).scalars().one()
+        checkpoint.head_hash = "0" * 64
+        db.commit()
+        assert not ledger.verify_anchor(db, anchor)
+
+    def test_detects_a_forged_anchor_signature(self, ledger, db, system_actor):
+        append(ledger, db, system_actor)
+        db.commit()
+        anchor = ledger.anchor(db, "2026-08-07")
+        db.commit()
+        anchor.signature = "A" * 86
+        db.commit()
+        assert not ledger.verify_anchor(db, anchor)
+
+    def test_refuses_to_anchor_when_nothing_moved(self, ledger, db, system_actor):
+        with pytest.raises(ValueError, match="nothing to anchor"):
             ledger.anchor(db, "2026-08-07")
+
+        append(ledger, db, system_actor)
+        db.commit()
+        ledger.anchor(db, "2026-08-07")
+        db.commit()
+        with pytest.raises(ValueError, match="nothing to anchor"):
+            ledger.anchor(db, "2026-08-08")
+
+
+class TestMerkle:
+    def test_an_empty_tree_is_the_genesis(self):
+        assert merkle_root([]) == GENESIS_HASH
+
+    def test_a_single_leaf_is_its_own_root(self):
+        leaf = merkle_leaf("dos_A", "ab" * 32, 1)
+        assert merkle_root([leaf]) == leaf
+
+    def test_order_matters(self):
+        a = merkle_leaf("dos_A", "ab" * 32, 1)
+        b = merkle_leaf("dos_B", "cd" * 32, 1)
+        assert merkle_root([a, b]) != merkle_root([b, a])
+
+    def test_leaves_and_nodes_are_domain_separated(self):
+        """Otherwise a leaf could be presented as an internal subtree."""
+        a = merkle_leaf("dos_A", "ab" * 32, 1)
+        b = merkle_leaf("dos_B", "cd" * 32, 1)
+        from ehealth.security.crypto import sha256
+
+        assert merkle_root([a, b]) != sha256(a + b)
+
+    def test_an_odd_leaf_is_carried_not_duplicated(self):
+        """Duplicating the odd node is the CVE-2012-2459 mistake: two
+        different leaf sets would then produce one root."""
+        leaves = [merkle_leaf(f"dos_{i}", f"{i:064d}", 1) for i in range(3)]
+        assert merkle_root(leaves) != merkle_root(leaves + [leaves[-1]])
 
 
 class TestAuditContent:

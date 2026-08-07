@@ -283,6 +283,9 @@ class MedicationStatement(Base, TimestampMixin, VersionMixin, UidPk):
     __table_args__ = (
         Index("ix_medstatement_dossier_kind", "dossier_uid", "kind"),
         Index("ix_medstatement_dossier_effective", "dossier_uid", "effective_start"),
+        UniqueConstraint(
+            "dossier_uid", "offline_client_uid", name="uq_medstatement_offline_uid"
+        ),
     )
 
     dossier_uid: Mapped[str] = mapped_column(
@@ -322,3 +325,14 @@ class MedicationStatement(Base, TimestampMixin, VersionMixin, UidPk):
     )
     #: Links a dispense to the prescription it fulfils.
     based_on_uid: Mapped[str | None] = mapped_column(String(32))
+
+    #: Set when the entry was captured on a patient's device without
+    #: connectivity. The client generates the id offline (a ULID, so it needs
+    #: no coordination) and it is the idempotency key: replaying a sync that
+    #: half-succeeded returns the same row instead of duplicating the entry.
+    offline_client_uid: Mapped[str | None] = mapped_column(String(64))
+    #: The client's clock at capture. Recorded because it is clinically
+    #: meaningful — "I took it at 08:00" — and **never** used for ordering,
+    #: because a device clock is not evidence. ``created_at`` stays
+    #: authoritative.
+    captured_offline_at: Mapped[datetime | None] = mapped_column(UtcDateTime)

@@ -14,7 +14,10 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ehealth.api import (
     routes_access,
@@ -22,6 +25,7 @@ from ehealth.api import (
     routes_auth,
     routes_dossier,
     routes_medication,
+    routes_offline,
     routes_persons,
 )
 from ehealth.config import Environment, Settings, get_settings
@@ -30,8 +34,63 @@ from ehealth.db import create_all, init_engine
 from ehealth.domain.uid import new_uid
 from ehealth.services.access import AccessError
 from ehealth.services.auth import AuthError
+from ehealth.version import API_VERSION
 
 logger = logging.getLogger("ehealth")
+
+#: RFC 9457 problem types, resolved against the issuer so they are real URLs a
+#: partner can look up rather than opaque strings.
+_PROBLEM_TYPES = {
+    400: "bad-request",
+    401: "authentication-failed",
+    403: "access-denied",
+    404: "not-found",
+    409: "conflict",
+    413: "payload-too-large",
+    422: "validation-failed",
+    429: "rate-limited",
+    500: "internal-error",
+}
+_PROBLEM_TITLES = {
+    400: "Bad request",
+    401: "Authentication failed",
+    403: "Access denied",
+    404: "Not found",
+    409: "Conflict",
+    413: "Payload too large",
+    422: "Request validation failed",
+    429: "Too many requests",
+    500: "Internal error",
+}
+
+
+def problem(
+    request: Request,
+    status_code: int,
+    problem_type: str,
+    title: str,
+    *,
+    detail: object = None,
+    headers: dict[str, str] | None = None,
+    extra: dict[str, object] | None = None,
+) -> JSONResponse:
+    """Build an RFC 9457 ``application/problem+json`` response."""
+    body: dict[str, object] = {
+        "type": f"https://docs.dossier.example.ch/problems/{problem_type}",
+        "title": title,
+        "status": status_code,
+        "instance": str(request.url.path),
+    }
+    if detail is not None:
+        body["detail"] = detail
+    if extra:
+        body.update(extra)
+    return JSONResponse(
+        status_code=status_code,
+        content=body,
+        media_type="application/problem+json",
+        headers=headers,
+    )
 
 #: Sent on every response. ``default-src 'none'`` because this service returns
 #: JSON — it has no reason to be able to load anything at all.
@@ -99,16 +158,49 @@ def create_app(
         return response
 
     @app.exception_handler(AccessError)
-    async def _access_denied(_: Request, exc: AccessError) -> JSONResponse:
+    async def _access_denied(request: Request, exc: AccessError) -> JSONResponse:
         # The ledger holds the reason; the caller gets a bare refusal.
-        return JSONResponse(status_code=403, content={"detail": "access denied"})
+        return problem(request, 403, "access-denied", "Access denied")
 
     @app.exception_handler(AuthError)
-    async def _auth_failed(_: Request, exc: AuthError) -> JSONResponse:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "authentication failed"},
+    async def _auth_failed(request: Request, exc: AuthError) -> JSONResponse:
+        return problem(
+            request,
+            401,
+            "authentication-failed",
+            "Authentication failed",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_problem(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Every error leaves as RFC 9457 problem details.
+
+        Partners integrating against this need one error shape, not two — and
+        a machine-readable ``type`` they can branch on without parsing prose.
+        """
+        return problem(
+            request,
+            exc.status_code,
+            _PROBLEM_TYPES.get(exc.status_code, "error"),
+            _PROBLEM_TITLES.get(exc.status_code, "Error"),
+            detail=exc.detail,
+            headers=getattr(exc, "headers", None),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_problem(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return problem(
+            request,
+            422,
+            "validation-failed",
+            "Request validation failed",
+            detail="one or more fields are invalid",
+            extra={"errors": jsonable_encoder(exc.errors())},
         )
 
     @app.get("/health", tags=["operations"])
@@ -117,6 +209,7 @@ def create_app(
             "status": "ok",
             "environment": settings.environment.value,
             "data_region": settings.data_region.value,
+            "api_version": API_VERSION,
         }
 
     if container is not None:
@@ -125,15 +218,19 @@ def create_app(
 
         app.dependency_overrides[container_dep] = lambda: container
 
+    # Every resource route lives under /v1. A partner integrating against this
+    # needs to know that a URL they hard-code keeps meaning the same thing,
+    # and that a breaking change arrives as /v2 rather than as a surprise.
     for router in (
         routes_auth.router,
         routes_persons.router,
         routes_access.router,
         routes_dossier.router,
         routes_medication.router,
+        routes_offline.router,
         routes_audit.router,
     ):
-        app.include_router(router)
+        app.include_router(router, prefix=f"/{API_VERSION}")
 
     return app
 

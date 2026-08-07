@@ -506,6 +506,8 @@ class AuditEventOut(BaseModel):
     token_jti: str | None
     detail: dict[str, Any]
     entry_hash: str
+    #: Which chain the entry belongs to — a dossier UID, or "global".
+    chain_id: str
     #: Which build wrote the entry, and under which signed payload layout.
     payload_version: int
     software_version: str
@@ -514,8 +516,16 @@ class AuditEventOut(BaseModel):
 class ChainVerificationOut(BaseModel):
     ok: bool
     checked: int
+    chain_id: str | None = None
     first_bad_seq: int | None = None
     reason: str | None = None
+
+
+class LedgerVerificationOut(BaseModel):
+    ok: bool
+    chains_checked: int
+    events_checked: int
+    failures: list[ChainVerificationOut] = Field(default_factory=list)
 
 
 class RevisionOut(BaseModel):
@@ -532,3 +542,66 @@ class RevisionOut(BaseModel):
     state_hash: str
     audit_seq: int | None
     reason: str | None
+
+
+# --------------------------------------------------------------------------
+# Offline bundles and sync
+# --------------------------------------------------------------------------
+
+
+class PublicKeyOut(BaseModel):
+    """Everything a device needs to verify a bundle, and nothing more."""
+
+    algorithm: str
+    public_key: str
+    bundle_format_version: int
+
+
+class BundleOut(BaseModel):
+    #: Three base64url segments, one line — fits a QR code for the emergency
+    #: dataset, a file for the full one.
+    bundle: str
+    kind: str
+    issued_at: datetime
+    expires_at: datetime
+    #: The audit chain head this snapshot was cut from, so the bundle can be
+    #: placed in the record's history against a published anchor.
+    ledger_head: str | None
+    size_bytes: int
+
+
+class OfflineCaptureIn(StrictModel):
+    """One entry a patient recorded on their device while offline."""
+
+    #: Client-generated and stable across retries — the idempotency key.
+    client_uid: str = Field(min_length=8, max_length=64)
+    kind: MedicationEventKind
+    #: The device's clock at capture. Recorded, never trusted for ordering.
+    captured_at: datetime | None = None
+    product_uid: str | None = None
+    product_text: str | None = Field(default=None, max_length=240)
+    dosage: dict[str, Any] = Field(default_factory=dict)
+    quantity: str | None = None
+    reason: str | None = None
+    effective_start: datetime | None = None
+    effective_end: datetime | None = None
+    confidentiality: Confidentiality = Confidentiality.NORMAL
+
+
+class OfflineSyncIn(StrictModel):
+    items: list[OfflineCaptureIn] = Field(min_length=1, max_length=500)
+
+
+class SyncResultOut(BaseModel):
+    client_uid: str
+    #: "applied", "duplicate" (a retry, not an error) or "rejected".
+    outcome: str
+    statement_uid: str | None = None
+    reason: str | None = None
+
+
+class SyncReportOut(BaseModel):
+    applied: int
+    duplicates: int
+    rejected: int
+    results: list[SyncResultOut]

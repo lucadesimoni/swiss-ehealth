@@ -11,108 +11,9 @@ from __future__ import annotations
 
 import base64
 
-import pytest
-
 from ehealth.main import SECURITY_HEADERS
 
-from tests.conftest import AHVN_ANNA, AHVN_BEAT, AHVN_CARLA, login
-
-
-@pytest.fixture
-def registry(client):
-    """Enrolment-side setup, done with the admin key."""
-    organization = client.post(
-        "/organizations",
-        json={"name": "Kantonsspital Test", "che_uid": "CHE-109.322.551"},
-    )
-    assert organization.status_code == 201, organization.text
-    org_uid = organization.json()["uid"]
-
-    patient = client.post(
-        "/persons",
-        json={
-            "roles": ["patient"],
-            "given_name": "Anna",
-            "family_name": "Muster",
-            "ahvn13": AHVN_ANNA,
-            "birth_date": "1985-04-12",
-            "email": "anna.muster@example.ch",
-        },
-    )
-    assert patient.status_code == 201, patient.text
-
-    doctor = client.post(
-        "/persons",
-        json={
-            # Beat is registered as a patient too — one person, two roles.
-            "roles": ["patient"],
-            "given_name": "Beat",
-            "family_name": "Arzt",
-            "ahvn13": AHVN_BEAT,
-        },
-    )
-    assert doctor.status_code == 201, doctor.text
-    credential = client.post(
-        f"/persons/{doctor.json()['uid']}/credentials",
-        json={
-            "gln": "7601000000002",
-            "professional_register": "medreg",
-            "profession": "physician",
-            "specialisation": "Facharzt Allgemeine Innere Medizin",
-            "licence_canton": "ZH",
-            "licence_number": "ZH-2019-04412",
-            "zsr_number": "A123456",
-            "organization_uid": org_uid,
-        },
-    )
-    assert credential.status_code == 201, credential.text
-    verified = client.post(
-        f"/credentials/{credential.json()['uid']}/verify",
-        json={"source": "MedReg", "evidence": {"checked": "e2e"}},
-    )
-    assert verified.status_code == 200, verified.text
-
-    visitor = client.post(
-        "/persons",
-        json={
-            "roles": ["visitor"],
-            "given_name": "Carla",
-            "family_name": "Besuch",
-            "ahvn13": AHVN_CARLA,
-        },
-    )
-    assert visitor.status_code == 201, visitor.text
-
-    dossier = client.post(
-        "/dossiers", json={"patient_uid": patient.json()["uid"]}
-    )
-    assert dossier.status_code == 201, dossier.text
-
-    product = client.post(
-        "/products",
-        json={
-            "gtin": "7601000000002",
-            "name": "Lisinopril Test 10mg",
-            "atc_code": "C09AA03",
-            "active_ingredient": "Lisinopril",
-            "strength": "10 mg",
-            "swissmedic_authorisation": "62536",
-            "pharmacode": "1234567",
-            "dispensing_category": "B",
-            "sl_listed": True,
-        },
-    )
-    assert product.status_code == 201, product.text
-
-    return {
-        "org": org_uid,
-        "patient": patient.json(),
-        "doctor": doctor.json(),
-        "visitor": visitor.json(),
-        "credential": verified.json(),
-        "dossier": dossier.json(),
-        "product": product.json(),
-    }
+from tests.conftest import AHVN_ANNA, login
 
 
 class TestRegistration:
@@ -127,7 +28,7 @@ class TestRegistration:
     def test_a_person_can_hold_several_roles(self, client, registry):
         """The doctor is registered as a patient and holds a credential, so
         both roles are live on one record."""
-        roles = client.get(f"/persons/{registry['doctor']['uid']}/roles").json()
+        roles = client.get(f"/v1/persons/{registry['doctor']['uid']}/roles").json()
         assert {r["role"] for r in roles if r["status"] == "active"} == {
             "patient",
             "healthcare_professional",
@@ -144,7 +45,7 @@ class TestRegistration:
 
     def test_a_duplicate_registration_is_a_conflict(self, client, registry):
         response = client.post(
-            "/persons",
+            "/v1/persons",
             json={
                 "roles": ["patient"],
                 "given_name": "Anna",
@@ -157,7 +58,7 @@ class TestRegistration:
 
     def test_an_invalid_ahv_number_is_rejected_before_anything_happens(self, client):
         response = client.post(
-            "/persons",
+            "/v1/persons",
             json={
                 "roles": ["patient"],
                 "given_name": "Falsch",
@@ -168,19 +69,19 @@ class TestRegistration:
         assert response.status_code == 422
 
     def test_lookup_by_ahv_number_resolves_the_uid(self, client, registry):
-        response = client.post("/persons/lookup", json={"ahvn13": AHVN_ANNA})
+        response = client.post("/v1/persons/lookup", json={"ahvn13": AHVN_ANNA})
         assert response.status_code == 200
         assert response.json()["uid"] == registry["patient"]["uid"]
 
     def test_lookup_by_sector_id_resolves_the_same_person(self, client, registry):
         response = client.post(
-            "/persons/lookup", json={"spid": registry["patient"]["spid"]}
+            "/v1/persons/lookup", json={"spid": registry["patient"]["spid"]}
         )
         assert response.json()["uid"] == registry["patient"]["uid"]
 
     def test_the_registry_is_closed_without_the_admin_key(self, client):
         response = client.post(
-            "/persons",
+            "/v1/persons",
             headers={"X-Admin-Key": "nope"},
             json={"roles": ["patient"], "given_name": "X", "family_name": "Y"},
         )
@@ -202,7 +103,7 @@ class TestFullJourney:
 
         # 1. The patient joins and sets their policy.
         consent = client.post(
-            "/consent",
+            "/v1/consent",
             headers=patient.auth_header,
             json={"default_access_level": "normal", "emergency_access_allowed": True},
         )
@@ -210,7 +111,7 @@ class TestFullJourney:
 
         # 2. The patient grants the doctor bounded access.
         grant = client.post(
-            "/grants",
+            "/v1/grants",
             headers=patient.auth_header,
             json={
                 "dossier_uid": registry["dossier"]["uid"],
@@ -239,7 +140,7 @@ class TestFullJourney:
             email="beat.arzt@example.ch",
         )
         capability = client.post(
-            f"/grants/{grant_uid}/token", headers=doctor.auth_header, json={}
+            f"/v1/grants/{grant_uid}/token", headers=doctor.auth_header, json={}
         )
         assert capability.status_code == 200, capability.text
         cap_headers = {
@@ -250,7 +151,7 @@ class TestFullJourney:
         # 4. The doctor prescribes.
         dossier_uid = registry["dossier"]["uid"]
         prescription = client.post(
-            f"/dossiers/{dossier_uid}/medications",
+            f"/v1/dossiers/{dossier_uid}/medications",
             headers=cap_headers,
             json={
                 "kind": "prescription",
@@ -263,7 +164,7 @@ class TestFullJourney:
 
         # 5. And files a consultation note.
         document = client.post(
-            f"/dossiers/{dossier_uid}/documents",
+            f"/v1/dossiers/{dossier_uid}/documents",
             headers=cap_headers,
             json={
                 "title": "Konsultation 2026-08-07",
@@ -276,14 +177,14 @@ class TestFullJourney:
 
         # 6. The reconciled list shows the prescription.
         reconciled = client.get(
-            f"/dossiers/{dossier_uid}/medications/reconciled", headers=cap_headers
+            f"/v1/dossiers/{dossier_uid}/medications/reconciled", headers=cap_headers
         )
         assert reconciled.status_code == 200
         assert len(reconciled.json()) == 1
         assert reconciled.json()[0]["kind"] == "prescription"
 
         # 7. The patient sees who touched their record.
-        trail = client.get("/audit/me", headers=patient.auth_header)
+        trail = client.get("/v1/audit/me", headers=patient.auth_header)
         assert trail.status_code == 200
         actions = {event["action"] for event in trail.json()}
         assert {"medication.added", "document.added", "grant.issued"} <= actions
@@ -296,18 +197,18 @@ class TestFullJourney:
 
         # 8. Revoking the grant closes the door immediately.
         revoked = client.post(
-            f"/grants/{grant_uid}/revoke",
+            f"/v1/grants/{grant_uid}/revoke",
             headers=patient.auth_header,
             json={"reason": "Behandlung abgeschlossen"},
         )
         assert revoked.status_code == 200
         after = client.get(
-            f"/dossiers/{dossier_uid}/medications/reconciled", headers=cap_headers
+            f"/v1/dossiers/{dossier_uid}/medications/reconciled", headers=cap_headers
         )
         assert after.status_code == 403
 
         # 9. The ledger still verifies end to end.
-        verification = client.get("/audit/verify")
+        verification = client.get("/v1/audit/verify")
         assert verification.status_code == 200
         assert verification.json()["ok"] is True
         assert verification.json()["checked"] > 10
@@ -325,10 +226,10 @@ class TestVisitorAccess:
             subject="swissid-anna",
             email="anna.muster@example.ch",
         )
-        client.post("/consent", headers=patient.auth_header, json={})
+        client.post("/v1/consent", headers=patient.auth_header, json={})
 
         grant = client.post(
-            "/grants/visitor",
+            "/v1/grants/visitor",
             headers=patient.auth_header,
             json={
                 "visitor_uid": registry["visitor"]["uid"],
@@ -351,7 +252,7 @@ class TestVisitorAccess:
             email="carla.besuch@example.ch",
         )
         capability = client.post(
-            f"/grants/{grant.json()['uid']}/token",
+            f"/v1/grants/{grant.json()['uid']}/token",
             headers=visitor.auth_header,
             json={},
         )
@@ -364,13 +265,13 @@ class TestVisitorAccess:
         dossier_uid = registry["dossier"]["uid"]
         assert (
             client.get(
-                f"/dossiers/{dossier_uid}/documents", headers=cap_headers
+                f"/v1/dossiers/{dossier_uid}/documents", headers=cap_headers
             ).status_code
             == 200
         )
         # Reading is allowed; writing is not, because the scope is not there.
         write = client.post(
-            f"/dossiers/{dossier_uid}/documents",
+            f"/v1/dossiers/{dossier_uid}/documents",
             headers=cap_headers,
             json={
                 "title": "should not exist",
@@ -392,7 +293,7 @@ class TestVisitorAccess:
             email="carla.besuch@example.ch",
         )
         response = client.post(
-            "/grants/visitor",
+            "/v1/grants/visitor",
             headers=visitor.auth_header,
             json={"visitor_uid": registry["visitor"]["uid"]},
         )
@@ -411,7 +312,7 @@ class TestEmergency:
             subject="swissid-anna",
             email="anna.muster@example.ch",
         )
-        client.post("/consent", headers=patient.auth_header, json={})
+        client.post("/v1/consent", headers=patient.auth_header, json={})
 
         doctor = login(
             client,
@@ -422,7 +323,7 @@ class TestEmergency:
             email="beat.arzt@example.ch",
         )
         response = client.post(
-            "/access/emergency",
+            "/v1/access/emergency",
             headers=doctor.auth_header,
             json={
                 "patient_uid": registry["patient"]["uid"],
@@ -436,12 +337,12 @@ class TestEmergency:
         dossier_uid = registry["dossier"]["uid"]
         assert (
             client.get(
-                f"/dossiers/{dossier_uid}/documents", headers=cap_headers
+                f"/v1/dossiers/{dossier_uid}/documents", headers=cap_headers
             ).status_code
             == 200
         )
 
-        trail = client.get("/audit/me", headers=patient.auth_header)
+        trail = client.get("/v1/audit/me", headers=patient.auth_header)
         assert any(
             event["action"] == "access.emergency" for event in trail.json()
         )
@@ -458,7 +359,7 @@ class TestEmergency:
             email="anna.muster@example.ch",
         )
         response = client.post(
-            "/access/emergency",
+            "/v1/access/emergency",
             headers=patient.auth_header,
             json={
                 "patient_uid": registry["patient"]["uid"],
@@ -480,15 +381,15 @@ class TestPatientSelfAccess:
             subject="swissid-anna",
             email="anna.muster@example.ch",
         )
-        client.post("/consent", headers=patient.auth_header, json={})
-        capability = client.post("/access/self", headers=patient.auth_header)
+        client.post("/v1/consent", headers=patient.auth_header, json={})
+        capability = client.post("/v1/access/self", headers=patient.auth_header)
         assert capability.status_code == 200, capability.text
         assert capability.json()["access_level"] == "secret"
 
         cap_headers = {**patient.auth_header, "X-Capability": capability.json()["token"]}
         dossier_uid = registry["dossier"]["uid"]
         secret = client.post(
-            f"/dossiers/{dossier_uid}/documents",
+            f"/v1/dossiers/{dossier_uid}/documents",
             headers=cap_headers,
             json={
                 "title": "Nur für mich",
@@ -500,7 +401,7 @@ class TestPatientSelfAccess:
         )
         assert secret.status_code == 201
         listed = client.get(
-            f"/dossiers/{dossier_uid}/documents", headers=cap_headers
+            f"/v1/dossiers/{dossier_uid}/documents", headers=cap_headers
         )
         assert len(listed.json()) == 1
 
@@ -513,9 +414,9 @@ class TestPatientSelfAccess:
             subject="swissid-anna",
             email="anna.muster@example.ch",
         )
-        before = client.get("/persons/me", headers=patient.auth_header).json()
+        before = client.get("/v1/persons/me", headers=patient.auth_header).json()
         updated = client.patch(
-            "/persons/me/contact",
+            "/v1/persons/me/contact",
             headers=patient.auth_header,
             json={"phone": "+41 79 123 45 67", "reason": "neue Nummer"},
         )
@@ -523,7 +424,7 @@ class TestPatientSelfAccess:
         assert updated.json()["version"] == before["version"] + 1
         assert updated.json()["phone"] == "+41 79 123 45 67"
 
-        history = client.get(f"/history/person/{patient.person_uid}")
+        history = client.get(f"/v1/history/person/{patient.person_uid}")
         assert history.status_code == 200
         assert [r["version"] for r in history.json()] == [1, 2]
         assert history.json()[1]["reason"] == "neue Nummer"
@@ -542,7 +443,7 @@ class TestTransportHardening:
 
     def test_unknown_fields_are_rejected(self, client, registry):
         response = client.post(
-            "/persons",
+            "/v1/persons",
             json={
                 "roles": ["patient"],
                 "given_name": "A",
@@ -555,14 +456,30 @@ class TestTransportHardening:
 
 
 class TestLedgerAnchoring:
-    def test_anchors_and_reverifies(self, client, registry):
-        anchor = client.post("/audit/anchor", params={"period": "2026-08-07"})
+    def test_anchors_every_chain_and_reverifies(self, client, registry):
+        anchor = client.post("/v1/audit/anchor", params={"period": "2026-08-07"})
         assert anchor.status_code == 200, anchor.text
         body = anchor.json()
         assert body["event_count"] > 0
-        assert len(body["head_hash"]) == 64
+        assert body["chain_count"] >= 1
+        assert len(body["anchor_hash"]) == 64
+        assert len(body["merkle_root"]) == 64
+        assert body["verified"] is True
 
-        again = client.post("/audit/anchor", params={"period": "2026-08-07"})
-        assert again.json()["head_hash"] == body["head_hash"]
+        again = client.post("/v1/audit/anchor", params={"period": "2026-08-07"})
+        assert again.json()["anchor_hash"] == body["anchor_hash"]
 
-        assert client.get("/audit/verify").json()["ok"] is True
+        assert client.get("/v1/audit/verify").json()["ok"] is True
+        whole = client.get("/v1/audit/verify-all").json()
+        assert whole["ok"] is True
+        assert whole["chains_checked"] >= 1
+
+    def test_a_patient_can_verify_their_own_chain_alone(self, client, registry):
+        """The question a patient actually has is about *their* record, and it
+        stays cheap however large the system gets."""
+        result = client.get(
+            "/v1/audit/verify", params={"chain_id": registry["dossier"]["uid"]}
+        ).json()
+        assert result["ok"] is True
+        assert result["chain_id"] == registry["dossier"]["uid"]
+        assert result["checked"] > 0

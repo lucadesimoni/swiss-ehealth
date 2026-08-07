@@ -215,7 +215,7 @@ def login(
     """Run the full SwissID + email OTP flow over HTTP."""
     mock_idp.enrol(subject, email=email)
     linked = client.post(
-        "/auth/accounts/link",
+        "/v1/auth/accounts/link",
         json={
             "person_uid": person_uid,
             "issuer": "https://mock-idp.local",
@@ -225,7 +225,7 @@ def login(
     )
     assert linked.status_code == 201, linked.text
 
-    started = client.post("/auth/login")
+    started = client.post("/v1/auth/login")
     assert started.status_code == 200, started.text
     state = started.json()["state"]
 
@@ -242,14 +242,14 @@ def login(
         nonce = flow.nonce
     code = mock_idp.authorize(subject, nonce)
 
-    challenge = client.post("/auth/callback", json={"state": state, "code": code})
+    challenge = client.post("/v1/auth/callback", json={"state": state, "code": code})
     assert challenge.status_code == 200, challenge.text
     session_uid = challenge.json()["session_uid"]
 
     otp = outbox.last_code_for(email)
     assert otp is not None
     verified = client.post(
-        "/auth/mfa/verify", json={"session_uid": session_uid, "code": otp}
+        "/v1/auth/mfa/verify", json={"session_uid": session_uid, "code": otp}
     )
     assert verified.status_code == 200, verified.text
     body = verified.json()
@@ -259,3 +259,100 @@ def login(
         refresh_token=body["refresh_token"],
         session_uid=body["session_uid"],
     )
+
+
+@pytest.fixture
+def registry(client):
+    """Enrolment-side setup, done with the admin key."""
+    organization = client.post(
+        "/v1/organizations",
+        json={"name": "Kantonsspital Test", "che_uid": "CHE-109.322.551"},
+    )
+    assert organization.status_code == 201, organization.text
+    org_uid = organization.json()["uid"]
+
+    patient = client.post(
+        "/v1/persons",
+        json={
+            "roles": ["patient"],
+            "given_name": "Anna",
+            "family_name": "Muster",
+            "ahvn13": AHVN_ANNA,
+            "birth_date": "1985-04-12",
+            "email": "anna.muster@example.ch",
+        },
+    )
+    assert patient.status_code == 201, patient.text
+
+    doctor = client.post(
+        "/v1/persons",
+        json={
+            # Beat is registered as a patient too — one person, two roles.
+            "roles": ["patient"],
+            "given_name": "Beat",
+            "family_name": "Arzt",
+            "ahvn13": AHVN_BEAT,
+        },
+    )
+    assert doctor.status_code == 201, doctor.text
+    credential = client.post(
+        f"/v1/persons/{doctor.json()['uid']}/credentials",
+        json={
+            "gln": "7601000000002",
+            "professional_register": "medreg",
+            "profession": "physician",
+            "specialisation": "Facharzt Allgemeine Innere Medizin",
+            "licence_canton": "ZH",
+            "licence_number": "ZH-2019-04412",
+            "zsr_number": "A123456",
+            "organization_uid": org_uid,
+        },
+    )
+    assert credential.status_code == 201, credential.text
+    verified = client.post(
+        f"/v1/credentials/{credential.json()['uid']}/verify",
+        json={"source": "MedReg", "evidence": {"checked": "e2e"}},
+    )
+    assert verified.status_code == 200, verified.text
+
+    visitor = client.post(
+        "/v1/persons",
+        json={
+            "roles": ["visitor"],
+            "given_name": "Carla",
+            "family_name": "Besuch",
+            "ahvn13": AHVN_CARLA,
+        },
+    )
+    assert visitor.status_code == 201, visitor.text
+
+    dossier = client.post(
+        "/v1/dossiers", json={"patient_uid": patient.json()["uid"]}
+    )
+    assert dossier.status_code == 201, dossier.text
+
+    product = client.post(
+        "/v1/products",
+        json={
+            "gtin": "7601000000002",
+            "name": "Lisinopril Test 10mg",
+            "atc_code": "C09AA03",
+            "active_ingredient": "Lisinopril",
+            "strength": "10 mg",
+            "swissmedic_authorisation": "62536",
+            "pharmacode": "1234567",
+            "dispensing_category": "B",
+            "sl_listed": True,
+        },
+    )
+    assert product.status_code == 201, product.text
+
+    return {
+        "org": org_uid,
+        "patient": patient.json(),
+        "doctor": doctor.json(),
+        "visitor": visitor.json(),
+        "credential": verified.json(),
+        "dossier": dossier.json(),
+        "product": product.json(),
+    }

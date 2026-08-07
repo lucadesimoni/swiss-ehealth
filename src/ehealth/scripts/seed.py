@@ -291,12 +291,37 @@ def main() -> int:
                   f"{event.action:<24} {event.outcome:<8} {actor_label}")
 
         rule("8. Ledger integrity")
-        result = container.ledger.verify_chain(db)
-        print(f"  chain verified: {result.ok}  ({result.checked} entries)")
+        # One chain per dossier, so a patient can verify their own record
+        # without walking the whole country's trail.
+        own = container.ledger.verify_chain(db, dossier.uid)
+        print(f"  dossier chain {dossier.uid}: {own.ok} ({own.checked} entries)")
+        whole = container.ledger.verify_all(db)
+        print(f"  every chain verified: {whole.ok} "
+              f"({whole.chains_checked} chains, {whole.events_checked} entries)")
+
         anchor = container.ledger.anchor(db, "demo")
         db.commit()
-        print(f"  anchor head hash {anchor.head_hash}")
-        print(f"  signature        {anchor.signature[:48]}…")
+        print(f"  anchor merkle root {anchor.merkle_root}")
+        print(f"  anchor hash        {anchor.anchor_hash}   <- publish this")
+        print(f"  covers             {anchor.chain_count} chains, "
+              f"{anchor.event_count} entries")
+        print(f"  re-verified        {container.ledger.verify_anchor(db, anchor)}")
+
+        rule("9. Offline")
+        bundle = container.offline.emergency_dataset(
+            db, patient=patient, dossier=dossier, actor=actor
+        )
+        db.commit()
+        from ehealth.services.offline import verify_bundle
+
+        verified = verify_bundle(bundle, container.offline.public_key())
+        print(f"  emergency dataset  {len(bundle)} bytes (QR-sized)")
+        print(f"  verifies offline   {verified.kind}, current={verified.is_current}")
+        print(f"  public key         {container.offline.public_key()}")
+        print("  contains:", ", ".join(
+            m["name"] for m in verified.payload["medications"]
+        ) or "(no current medication)")
+        result = whole
 
         print("\nDemo database written to ./ehealth-demo.db\n")
         return 0 if result.ok else 1

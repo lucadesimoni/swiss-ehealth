@@ -12,10 +12,82 @@ the diff:
 
 | | API | DB schema | Audit payload |
 |---|---|---|---|
+| 0.3.0 | v1 | 3 | 2 |
 | 0.2.0 | v1 | 2 | 1 |
 | 0.1.0 | v1 | 1 | 1 |
 
 ## [Unreleased]
+
+## [0.3.0] — 2026-08-07
+
+National scale, offline for patients, and an API partners can build on.
+API `v1`, DB schema `3`, audit payload `2`.
+
+Pre-1.0, so these breaking changes come on a MINOR bump — see
+[`docs/versioning.md`](docs/versioning.md).
+
+### Fixed
+
+- **The audit ledger no longer serialises the whole country.** One global hash
+  chain meant every append in the system contended for a single tail lock —
+  the ceiling for a national deployment, reached long before anything else ran
+  out. There is now **one chain per dossier** plus a `global` chain for
+  everything not scoped to a patient, so two clinicians writing to two
+  different patients never contend, while writes to the *same* patient still
+  serialise, which is the ordering that matters clinically.
+
+### Added
+
+**Offline for patients**
+- Signed **emergency dataset** — current medication and the identifying
+  minimum, under 2 KB so it fits a QR code on a card. Carries only material
+  the patient left at the `NORMAL` level: a bundle that leaves the system
+  loses every access control the system has, so what the patient hid must not
+  travel on a card they carry.
+- Signed **full bundle** for the patient's own device, clamped to what the
+  presenting capability actually reaches.
+- `verify_bundle()` — a free function with no database, no settings and no
+  container, so a phone, a paramedic's tablet or a partner system can check a
+  bundle with nothing but the published public key. `GET /v1/offline/public-key`
+  is deliberately unauthenticated for the same reason.
+- Bundles name the ledger head they were cut from, so a holder can place one
+  in the record's history against a published anchor, and carry an expiry:
+  an expired bundle still *verifies*, and readers are told it is stale rather
+  than being shown old data as current.
+- **Offline capture sync** (`POST /v1/offline/sync`), idempotent per
+  client-generated id so a phone that loses signal mid-upload can retry
+  without duplicating, and reported per item so one bad row never blocks a
+  patient's whole history. The device clock is recorded because it is
+  clinically meaningful and never trusted for ordering.
+- Prescriptions cannot be captured offline: that needs a licensed
+  professional and a live licence check, neither of which happens on a phone
+  in a tunnel.
+
+**API-first**
+- **BREAKING** — every resource route moves under `/v1`. A partner hard-coding
+  a URL needs it to keep meaning the same thing, and a breaking change should
+  arrive as `/v2` rather than as a surprise.
+- Every error leaves as **RFC 9457 problem details**
+  (`application/problem+json`) with a machine-readable `type`, so partners
+  branch on a URI instead of parsing prose.
+- `GET /v1/audit/verify?chain_id=…` verifies a single dossier — the question a
+  patient actually has ("was *my* record tampered with"), and it stays cheap
+  however large the system gets. `GET /v1/audit/verify-all` covers everything,
+  as the background job it is at scale.
+
+**Ledger**
+- Audit payload **version 2** adds the chain id inside the signature, so an
+  entry cannot be replayed into a different chain and still verify. Version 1
+  entries keep verifying under their own builder, which is what the versioned
+  payload design was built for.
+- Anchors now commit **every chain that moved** into one Merkle root, with a
+  per-chain checkpoint row only for chains with activity — so anchoring costs
+  track activity rather than population. Anchors link to their predecessor and
+  form their own chain, and `verify_anchor()` recomputes the root and
+  signature from the checkpoints.
+- Merkle construction is domain-separated between leaves and nodes, and
+  carries an odd node up rather than duplicating it, avoiding the
+  CVE-2012-2459 ambiguity where two leaf sets produce one root.
 
 ## [0.2.0] — 2026-08-07
 
@@ -178,6 +250,7 @@ First release. API `v1`, DB schema `1`, audit payload `1`.
 - Released under AGPL-3.0-or-later. See [`docs/licensing.md`](docs/licensing.md)
   for the reasoning; the repository previously carried GPL-3.0.
 
-[Unreleased]: https://github.com/lucadesimoni/swiss-ehealth/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/lucadesimoni/swiss-ehealth/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.3.0
 [0.2.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.2.0
 [0.1.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.1.0

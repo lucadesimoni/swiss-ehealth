@@ -8,6 +8,7 @@ from ehealth.models.audit import (
     AuditOutcome,
     ChangeOperation,
     LedgerAnchor,
+    LedgerAnchorChain,
     RecordRevision,
 )
 from ehealth.models.auth import (
@@ -83,6 +84,7 @@ __all__ = [
     "IdentityAccount",
     "IssuedToken",
     "LedgerAnchor",
+    "LedgerAnchorChain",
     "MedicationEventKind",
     "MedicationStatement",
     "MedicationStatus",

@@ -34,7 +34,9 @@ from ehealth.services.auth import AuthService
 from ehealth.services.changelog import ChangeTracker
 from ehealth.services.dossier import DossierService
 from ehealth.services.medication import MedicationCatalogue, MedicationService
+from ehealth.services.offline import OfflineBundleService
 from ehealth.services.persons import OrganizationService, PersonService
+from ehealth.services.sync import OfflineSyncService
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ class Container:
     consents: ConsentService
     access: AccessService
     auth: AuthService
+    offline: OfflineBundleService
+    sync: OfflineSyncService
     email: EmailSender
     identity_provider: IdentityProvider
 
@@ -102,6 +106,7 @@ def build_container(settings: Settings | None = None) -> Container:
 
     persons = PersonService(identity, ledger, tracker)
     consents = ConsentService(ledger, tracker, persons)
+    medications = MedicationService(ledger, tracker, persons)
     return Container(
         settings=settings,
         keyring=keyring,
@@ -117,7 +122,7 @@ def build_container(settings: Settings | None = None) -> Container:
         catalogue=MedicationCatalogue(ledger, tracker),
         # The medication service asks the person registry whether the author
         # holds a live practice licence before accepting a prescription.
-        medications=MedicationService(ledger, tracker, persons),
+        medications=medications,
         consents=consents,
         access=AccessService(
             tokens,
@@ -147,6 +152,8 @@ def build_container(settings: Settings | None = None) -> Container:
             otp_max_attempts=settings.otp_max_attempts,
             max_failed_logins=settings.login_max_attempts_per_hour,
         ),
+        offline=OfflineBundleService(keyring, ledger, issuer=settings.issuer),
+        sync=OfflineSyncService(medications, ledger),
         email=email,
         identity_provider=provider,
     )

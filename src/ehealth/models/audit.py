@@ -20,7 +20,15 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ehealth.db import Base
@@ -94,13 +102,20 @@ class AuditEvent(Base, UidPk):
 
     __tablename__ = "audit_event"
     __table_args__ = (
-        UniqueConstraint("seq", name="uq_audit_event_seq"),
+        # Sequence is per chain, not global: that is what lets two clinicians
+        # writing to two different patients avoid contending for one lock.
+        UniqueConstraint("chain_id", "seq", name="uq_audit_event_chain_seq"),
+        Index("ix_audit_chain_seq", "chain_id", "seq"),
         Index("ix_audit_dossier_ts", "dossier_uid", "occurred_at"),
         Index("ix_audit_actor_ts", "actor_uid", "occurred_at"),
         Index("ix_audit_action_ts", "action", "occurred_at"),
         Index("ix_audit_resource", "resource_type", "resource_uid"),
     )
 
+    #: Which chain this entry belongs to: a dossier UID, or "global" for
+    #: everything not scoped to one patient.
+    chain_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: Position within that chain, starting at 1.
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
@@ -146,21 +161,29 @@ class AuditEvent(Base, UidPk):
 
 
 class LedgerAnchor(Base, UidPk):
-    """Periodic seal over the ledger head.
+    """Periodic seal over every chain that moved, as one Merkle root.
 
     Publishing (or externally timestamping) the anchor bounds how far back an
     attacker who compromises the signing key could rewrite: everything before
-    the last published anchor is frozen.
+    the last published anchor is frozen. Anchors link to their predecessor, so
+    they form their own chain and a gap in them is visible too.
     """
 
     __tablename__ = "ledger_anchor"
-    __table_args__ = (UniqueConstraint("period", name="uq_ledger_anchor_period"),)
+    __table_args__ = (
+        UniqueConstraint("period", name="uq_ledger_anchor_period"),
+        Index("ix_ledger_anchor_created", "created_at"),
+    )
 
     #: e.g. "2026-08-07" for a daily anchor.
     period: Mapped[str] = mapped_column(String(24), nullable=False)
-    first_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Links anchors into their own chain.
+    previous_anchor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Root over the per-chain checkpoints in :class:`LedgerAnchorChain`.
+    merkle_root: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: What is signed and what gets published.
+    anchor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    chain_count: Mapped[int] = mapped_column(Integer, nullable=False)
     event_count: Mapped[int] = mapped_column(Integer, nullable=False)
     signature: Mapped[str] = mapped_column(String(128), nullable=False)
     key_id: Mapped[str] = mapped_column(String(48), nullable=False)
@@ -171,6 +194,30 @@ class LedgerAnchor(Base, UidPk):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     #: Reference to an external timestamp authority or notarisation, if used.
     external_reference: Mapped[str | None] = mapped_column(String(300))
+
+
+class LedgerAnchorChain(Base, UidPk):
+    """One chain's committed position at the moment of an anchor.
+
+    Rows are written only for chains that *moved* in the period, so the cost
+    tracks activity rather than population — the difference between an anchor
+    that is affordable nationally and one that is not.
+    """
+
+    __tablename__ = "ledger_anchor_chain"
+    __table_args__ = (
+        UniqueConstraint("anchor_uid", "chain_id", name="uq_anchor_chain"),
+        Index("ix_anchor_chain_chain", "chain_id", "last_seq"),
+    )
+
+    anchor_uid: Mapped[str] = mapped_column(
+        ForeignKey("ledger_anchor.uid", ondelete="RESTRICT"), nullable=False
+    )
+    chain_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Entries added to this chain since the previous anchor.
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class ChangeOperation(StrEnum):

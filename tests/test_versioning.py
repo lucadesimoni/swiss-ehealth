@@ -251,11 +251,11 @@ class TestVersionEndpoint:
     def test_requires_the_admin_key(self, client):
         """Build provenance is what an auditor needs and what an attacker uses
         to pick a known vulnerability."""
-        response = client.get("/version", headers={"X-Admin-Key": "wrong"})
+        response = client.get("/v1/version", headers={"X-Admin-Key": "wrong"})
         assert response.status_code == 401
 
     def test_reports_the_full_identity(self, client):
-        response = client.get("/version")
+        response = client.get("/v1/version")
         assert response.status_code == 200
         body = response.json()
         assert body["version"] == __version__
@@ -266,7 +266,7 @@ class TestVersionEndpoint:
         assert body["audit_payload_versions_supported"] == sorted(PAYLOAD_BUILDERS)
 
     def test_reports_which_algorithms_may_still_be_issued(self, client):
-        algorithms = client.get("/version").json()["signature_algorithms"]
+        algorithms = client.get("/v1/version").json()["signature_algorithms"]
         assert algorithms["Ed25519"] == {"issuing": True, "available": True}
         assert algorithms["ML-DSA-65"]["available"] is False
 

@@ -182,10 +182,24 @@ Two structures that cross-verify each other:
 `entry_hash = H(prev_hash ‖ payload_hash)`, each entry signed with Ed25519.
 Editing or deleting any row breaks every subsequent link, so tampering by
 anyone with database write access — including the operator — is detectable
-rather than merely discouraged. Periodic **anchors** seal the head; publish one
-outside the operator's control and everything before it is frozen, because a
-rewrite would have to produce a different head hash than the one already out
-there.
+rather than merely discouraged.
+
+It is **one chain per dossier**, not one chain overall. A single global chain
+is the obvious design and it cannot serve a country: every append locks the
+same tail row, so the whole nation's writes serialise. Per-dossier chains mean
+two clinicians treating two different patients never contend, while writes to
+the same patient still order correctly — the ordering that actually matters
+clinically.
+
+Periodic **anchors** give back the single value to publish: a Merkle root over
+every chain that moved in the period, linked to the previous anchor. Put one
+somewhere the operator cannot rewrite and everything before it is frozen.
+
+```
+GET /v1/audit/verify?chain_id=dos_…   one patient's chain — cheap, forever
+GET /v1/audit/verify-all              everything — a background job at scale
+POST /v1/audit/anchor                 seal the period, publish the hash
+```
 
 **The revision history** (`record_revision`) is bitemporal: every row's every
 version, with the diff, who made it, why, and a hash of the resulting state.
@@ -199,6 +213,64 @@ Y" would quietly become a second, unprotected copy of the record.
 Clinical data is never deleted: documents are superseded or retracted,
 medication is stopped or marked `entered_in_error`. A later reader has to be
 able to see that a wrong result existed and was withdrawn.
+
+## Offline, for patients
+
+An electronic record a patient can only reach with four bars of signal is not
+their record. Two cases, one mechanism:
+
+**The ambulance problem.** Someone collapses in a village at 02:00 with no
+coverage. The paramedic needs current medication *now*, and needs to know it is
+genuine and not two years stale. That is the **emergency dataset** — signed,
+under 2 KB, fits a QR code on a card.
+
+**The mobile problem.** A patient wants their record in a train tunnel and
+wants to add to it there. That is the **full bundle**, plus idempotent sync
+back.
+
+```bash
+GET  /v1/offline/public-key            unauthenticated — cache it once
+POST /v1/offline/emergency-dataset     signed, QR-sized
+POST /v1/offline/bundle                the patient's own copy
+POST /v1/offline/sync                  upload offline captures, idempotent
+```
+
+What makes this genuinely offline rather than merely downloadable is that
+**verification needs nothing but the public key** — no network, no account, no
+trust in whoever handed the file over. `verify_bundle()` is deliberately a free
+function with no database and no framework, so it can be reimplemented in
+Swift, Kotlin or TypeScript by reading it.
+
+Three properties that are easy to get wrong and are tested here:
+
+- A bundle carries only what the presenting capability reaches. The emergency
+  dataset is `NORMAL` only — a bundle leaving the system loses every access
+  control the system has, so what the patient *hid* must never travel on a card
+  they carry.
+- An expired bundle still **verifies**. It is still authentic; readers are told
+  it is stale. Hiding staleness from a paramedic would be worse than showing
+  old data labelled as old.
+- Sync is idempotent per client-generated id, so a phone that loses signal
+  mid-upload retries without duplicating, and reports **per item** — one bad
+  row never blocks a patient's whole history. The device clock is recorded
+  because it is clinically meaningful and never trusted for ordering.
+
+Prescriptions cannot be captured offline: that needs a licensed professional
+and a live licence check, neither of which happens on a phone in a tunnel.
+
+## API-first
+
+Everything is under `/v1`. There is no second, private interface — the app a
+patient uses and the integration a hospital runs are the same API, which is the
+only way an API stays honest.
+
+Errors are **RFC 9457 problem details** with a machine-readable `type`, so
+partners branch on a URI instead of parsing prose. Request bodies reject
+unknown fields rather than ignoring them: a silently dropped field in a health
+API is a silently dropped clinical instruction.
+
+Integration guide, including what is **not** there yet (machine-to-machine
+credentials, a change feed, IHE profiles), in [`docs/api.md`](docs/api.md).
 
 ## Versioning
 
@@ -223,7 +295,7 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 350 tests
+make test        # 399 tests
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
 
@@ -249,6 +321,11 @@ US-parented provider stays subject to the CLOUD Act wherever the disks are.
 [`docs/deployment-ch.md`](docs/deployment-ch.md) covers Swiss-operated
 providers, key custody (the decision that determines whether the rest is
 meaningful), data residency enforced rather than assumed, and what to monitor.
+
+For 9 million people: [`docs/scale.md`](docs/scale.md) covers the ledger
+partitioning, what each order of magnitude changes, multilingualism, federation
+between EPDG communities — and what has **not** been proven (no load test has
+been run, and there is still no migration path).
 
 On "absolutely secure": [`SECURITY.md`](SECURITY.md) states the threat model
 including what is **not** covered — root key compromise is total, a live
