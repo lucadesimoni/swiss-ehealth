@@ -15,7 +15,7 @@ likewise constrains who may use the AHVN13 systematically at all.
 This module implements that separation locally:
 
 ``ahvn13``  --HMAC(sector key)-->  ``ppid``  (256 bit, internal linkage key)
-                               \\-->  ``spid`` (13 digit, human/interop facing)
+                               \\-->  ``spid`` (18 digit EPR-SPID, interop facing)
                                \\-->  ``lookup_index`` (rotatable blind index)
 
 The AHVN13 itself is either discarded immediately after derivation, or —
@@ -24,12 +24,16 @@ lawful disclosure request — kept only as an AEAD-sealed blob bound to the
 ``ppid``. Which of the two applies is a deployment decision, not a code
 change: see ``settings.store_sealed_ahvn``.
 
-Note on the 13 digit SPID: nine significant digits cannot be collision-free
-for a population of millions, which is exactly why the real EPR-SPID is
-*allocated* by a registry rather than derived. We do the same — derivation
-proposes a candidate, the database's uniqueness constraint decides, and
-:meth:`IdentityService.spid_candidates` yields further candidates on
-collision.
+Two notes on the EPR-SPID:
+
+* It is **18 digits** (prefix 761), not 13 like the AHVN13 it derives from.
+  Confusing the two lengths is the most common error in Swiss e-health
+  integrations, so both are validated strictly and separately.
+* In a certified deployment it is **allocated by the ZAS UPI service**, not
+  computed locally. Deriving it here produces a correctly shaped, stable
+  identifier for deployments not connected to the UPI; the allocation loop
+  and the uniqueness constraint stay either way, so swapping in a real UPI
+  client changes one method and nothing else.
 """
 
 from __future__ import annotations
@@ -37,14 +41,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from ehealth.domain.uid import Ahvn13, spid_from_entropy
+from ehealth.domain.uid import SPID_PREFIX, Ahvn13, spid_from_entropy
 from ehealth.security.crypto import KeyPurpose, KeyRing, b64u
 
-#: Prefix of the derived sector identifier. 756 is reserved for the AHVN13
-#: itself, so a derived id must never carry it.
-SPID_PREFIX = "761"
-
-#: How many candidate SPIDs to try before giving up on allocation.
+#: How many candidate SPIDs to try before giving up on allocation. With
+#: fourteen significant digits a collision is vanishingly unlikely, but the
+#: probe stays because two patients sharing an identifier is not a failure
+#: mode worth risking.
 MAX_SPID_ATTEMPTS = 64
 
 
@@ -100,11 +103,17 @@ class IdentityService:
         )
 
     def spid_candidates(self, ahvn: Ahvn13) -> Iterator[str]:
-        """Yield deterministic SPID candidates for allocation.
+        """Yield deterministic 18 digit EPR-SPID candidates for allocation.
 
         The first candidate is a pure function of the AHVN13; subsequent ones
         exist only to resolve the rare collision, and the allocated value is
         recorded so the mapping stays stable afterwards.
+
+        **This is a stand-in.** In a certified EPDG deployment the EPR-SPID is
+        allocated by the ZAS UPI service and queried, not computed — see the
+        note in the module docstring. Deriving it locally gives a correctly
+        shaped identifier with the same stability properties for a deployment
+        that is not (yet) connected to the UPI.
         """
         for attempt in range(MAX_SPID_ATTEMPTS):
             entropy = self._keys.mac(

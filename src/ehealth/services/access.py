@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ from ehealth.domain.uid import new_uid
 from ehealth.models.audit import AuditAction, AuditOutcome
 from ehealth.models.base import Confidentiality, Purpose
 from ehealth.models.clinical import Dossier, DossierStatus
-from ehealth.models.core import Person, PersonKind, PersonStatus
+from ehealth.models.core import Person, PersonRoleKind, PersonStatus
 from ehealth.models.governance import (
     AccessGrant,
     Consent,
@@ -59,6 +59,9 @@ from ehealth.services.audit import (
     commit_security_event,
 )
 from ehealth.services.changelog import ChangeTracker, snapshot
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ehealth.services.persons import PersonService
 
 
 class AccessError(Exception):
@@ -128,7 +131,7 @@ def evaluate_policy(
     consent: ConsentSnapshot,
     *,
     requester_uid: str,
-    requester_kind: PersonKind,
+    requester_roles: frozenset[PersonRoleKind],
     organization_uid: str | None,
     purpose: Purpose,
     now: datetime | None = None,
@@ -172,11 +175,16 @@ def evaluate_policy(
             False, Confidentiality.NORMAL, f"purpose {purpose.value} is not permitted"
         )
 
-    if requester_kind is PersonKind.VISITOR:
-        # Visitors never reach the record through consent policy alone; they
-        # need an explicit grant, which is checked separately.
+    if PersonRoleKind.HEALTHCARE_PROFESSIONAL not in requester_roles:
+        # Anyone who is not acting as a healthcare professional — a visitor, a
+        # relative, a researcher — needs an explicit grant rather than the
+        # standing consent policy. Note this is a question about *roles held*,
+        # not about who the person is: a physician who is also this patient's
+        # relative still gets in as a professional.
         return AccessDecision(
-            False, Confidentiality.NORMAL, "visitors require an explicit grant"
+            False,
+            Confidentiality.NORMAL,
+            "requester holds no active healthcare professional role",
         )
 
     applicable = [
@@ -222,9 +230,15 @@ def evaluate_policy(
 
 
 class ConsentService:
-    def __init__(self, ledger: AuditLedger, tracker: ChangeTracker) -> None:
+    def __init__(
+        self,
+        ledger: AuditLedger,
+        tracker: ChangeTracker,
+        persons: "PersonService | None" = None,
+    ) -> None:
         self._ledger = ledger
         self._tracker = tracker
+        self._persons = persons
 
     def record(
         self,
@@ -237,7 +251,9 @@ class ConsentService:
         notify_on_access: bool = False,
         evidence: dict | None = None,
     ) -> Consent:
-        if not patient.is_patient():
+        if self._persons is not None and not self._persons.has_role(
+            session, patient.uid, PersonRoleKind.PATIENT
+        ):
             raise ConsentError("consent can only be recorded for a patient")
         existing = self.for_patient(session, patient.uid)
         if existing is not None:
@@ -437,6 +453,7 @@ class AccessService:
         consents: ConsentService,
         ledger: AuditLedger,
         tracker: ChangeTracker,
+        persons: "PersonService",
         *,
         capability_ttl_seconds: int = 600,
         visitor_ttl_seconds: int = 4 * 3600,
@@ -446,6 +463,7 @@ class AccessService:
         self._consents = consents
         self._ledger = ledger
         self._tracker = tracker
+        self._persons = persons
         self._capability_ttl = capability_ttl_seconds
         self._visitor_ttl = visitor_ttl_seconds
         self._emergency_ttl = emergency_ttl_seconds
@@ -462,6 +480,7 @@ class AccessService:
         granted_by: Person,
         purpose: Purpose,
         scopes: list[Scope],
+        grantee_role: PersonRoleKind = PersonRoleKind.HEALTHCARE_PROFESSIONAL,
         ttl_seconds: int | None = None,
         access_level: Confidentiality | None = None,
         max_uses: int = 0,
@@ -478,10 +497,14 @@ class AccessService:
         if dossier.status != DossierStatus.ACTIVE.value:
             raise AccessError("dossier is not active")
 
-        grantee_kind = PersonKind(grantee.kind)
+        # The grant records the *capacity* the grantee acts in. A person who
+        # is both a physician and this patient's relative can hold two grants
+        # with different reach, and each access says which one it used.
+        if not self._persons.has_role(session, grantee.uid, grantee_role):
+            raise AccessError(f"grantee holds no active {grantee_role.value} role")
         consent = self._consents.snapshot_for(session, dossier.patient_uid)
 
-        if grantee_kind is PersonKind.VISITOR:
+        if grantee_role is PersonRoleKind.VISITOR:
             # Visitors are authorised by the patient directly, so the policy
             # check is "is the patient participating", plus a hard scope cap.
             if consent.participation is not ParticipationStatus.ACTIVE:
@@ -497,8 +520,8 @@ class AccessService:
             decision = evaluate_policy(
                 consent,
                 requester_uid=grantee.uid,
-                requester_kind=grantee_kind,
-                organization_uid=grantee.organization_uid,
+                requester_roles=self._live_roles(session, grantee.uid),
+                organization_uid=self._organization_of(session, grantee.uid),
                 purpose=purpose,
             )
             if not decision.allowed:
@@ -515,7 +538,7 @@ class AccessService:
             uid=new_uid("grt"),
             dossier_uid=dossier.uid,
             grantee_uid=grantee.uid,
-            grantee_kind=grantee.kind,
+            grantee_kind=grantee_role.value,
             granted_by_uid=granted_by.uid,
             purpose=purpose.value,
             access_level=effective_level.value,
@@ -536,7 +559,7 @@ class AccessService:
             dossier_uid=dossier.uid,
             detail={
                 "grantee_uid": grantee.uid,
-                "grantee_kind": grantee.kind,
+                "grantee_role": grantee_role.value,
                 "purpose": purpose.value,
                 "access_level": effective_level.value,
                 "scopes": grant.scopes,
@@ -651,7 +674,7 @@ class AccessService:
 
         kind = (
             TokenKind.VISITOR
-            if grant.grantee_kind == PersonKind.VISITOR.value
+            if grant.grantee_kind == PersonRoleKind.VISITOR.value
             else TokenKind.EMERGENCY
             if grant.purpose == Purpose.EMERGENCY.value
             else TokenKind.CAPABILITY
@@ -797,7 +820,17 @@ class AccessService:
 
         consent = self._consents.snapshot_for(session, dossier.patient_uid)
         purpose = Purpose(claims.purpose)
-        if PersonKind(grantee.kind) is PersonKind.VISITOR:
+        grantee_role = PersonRoleKind(grant.grantee_kind)
+
+        # The role the grant was issued under must still be held. A doctor
+        # whose practice licence lapsed yesterday stops getting in today, even
+        # with a token minted while it was valid.
+        if not self._persons.has_role(session, grantee.uid, grantee_role, now=now):
+            self._reject(
+                session, actor, claims.jti, f"{grantee_role.value} role no longer held"
+            )
+
+        if grantee_role is PersonRoleKind.VISITOR:
             # A visitor's authority is the grant itself; consent only has to
             # still be live.
             if consent.participation is not ParticipationStatus.ACTIVE:
@@ -807,8 +840,8 @@ class AccessService:
             decision = evaluate_policy(
                 consent,
                 requester_uid=grantee.uid,
-                requester_kind=PersonKind(grantee.kind),
-                organization_uid=grantee.organization_uid,
+                requester_roles=self._live_roles(session, grantee.uid, now=now),
+                organization_uid=self._organization_of(session, grantee.uid),
                 purpose=purpose,
                 now=now,
             )
@@ -858,6 +891,25 @@ class AccessService:
         )
 
     # -- helpers ----------------------------------------------------------
+
+    def _live_roles(
+        self, session: Session, person_uid: str, *, now: datetime | None = None
+    ) -> frozenset[PersonRoleKind]:
+        now = now or utcnow()
+        return frozenset(
+            PersonRoleKind(role.role)
+            for role in self._persons.roles(session, person_uid)
+            if role.is_live(now)
+        )
+
+    def _organization_of(self, session: Session, person_uid: str) -> str | None:
+        """The institution the person currently practises at, if any.
+
+        Read from the live professional credential rather than the person row,
+        so an institution-scoped consent rule follows the licence.
+        """
+        credential = self._persons.active_credential(session, person_uid)
+        return credential.organization_uid if credential else None
 
     def _reject(
         self, session: Session, actor: ActorContext, jti: str | None, reason: str

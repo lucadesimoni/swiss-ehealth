@@ -20,11 +20,15 @@ from ehealth.container import Container, build_container
 from ehealth.db import create_all, get_session_factory, init_engine
 from ehealth.domain.uid import Ahvn13
 from ehealth.main import create_app
-from ehealth.models.core import PersonKind
+from ehealth.models.core import (
+    MedicalProfession,
+    PersonRoleKind,
+    ProfessionalRegister,
+)
 from ehealth.security.mfa import InMemoryEmailSender
 from ehealth.security.oidc import MockIdentityProvider
 from ehealth.services.audit import ActorContext
-from ehealth.services.persons import PersonRegistration
+from ehealth.services.persons import CredentialRegistration, PersonRegistration
 
 ADMIN_KEY = "test-admin-key-that-is-long-enough-32ch"
 
@@ -106,6 +110,7 @@ class World:
     organization: object
     patient: object
     doctor: object
+    credential: object
     visitor: object
     dossier: object
     consent: object
@@ -119,7 +124,7 @@ def world(container: Container, db: Session, system_actor: ActorContext) -> Worl
     patient = container.persons.register(
         db,
         PersonRegistration(
-            kind=PersonKind.PATIENT,
+            roles=[PersonRoleKind.PATIENT],
             given_name="Anna",
             family_name="Muster",
             ahvn13=AHVN_ANNA,
@@ -130,20 +135,34 @@ def world(container: Container, db: Session, system_actor: ActorContext) -> Worl
     doctor = container.persons.register(
         db,
         PersonRegistration(
-            kind=PersonKind.HEALTHCARE_PROFESSIONAL,
+            # Beat is a physician *and* a patient: one person, one UID, one
+            # pseudonym, two roles. This is the case the single-kind model
+            # could not represent.
+            roles=[PersonRoleKind.PATIENT],
             given_name="Beat",
             family_name="Arzt",
             ahvn13=AHVN_BEAT,
-            gln="7601000000002",
-            profession="Facharzt Innere Medizin",
-            organization_uid=organization.uid,
         ),
         system_actor,
+    )
+    credential = container.persons.register_credential(
+        db,
+        doctor,
+        system_actor,
+        CredentialRegistration(
+            gln="7601000000002",
+            register=ProfessionalRegister.MEDREG,
+            profession=MedicalProfession.PHYSICIAN,
+            specialisation="Facharzt Allgemeine Innere Medizin",
+            licence_canton="ZH",
+            licence_number="ZH-2019-04412",
+            organization_uid=organization.uid,
+        ),
     )
     visitor = container.persons.register(
         db,
         PersonRegistration(
-            kind=PersonKind.VISITOR,
+            roles=[PersonRoleKind.VISITOR],
             given_name="Carla",
             family_name="Besuch",
             ahvn13=AHVN_CARLA,
@@ -157,6 +176,7 @@ def world(container: Container, db: Session, system_actor: ActorContext) -> Worl
         organization=organization,
         patient=patient,
         doctor=doctor,
+        credential=credential,
         visitor=visitor,
         dossier=dossier,
         consent=consent,

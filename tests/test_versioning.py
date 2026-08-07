@@ -117,7 +117,7 @@ class TestReleaseIdentity:
         release_identity.cache_clear()
         try:
             assert release_identity().revision == "deadbeefcafe"
-            assert release_identity().label == "0.1.0+gdeadbee"
+            assert release_identity().label == f"{__version__}+gdeadbee"
         finally:
             release_identity.cache_clear()
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,10 +27,13 @@ from ehealth.models.clinical import (
     DossierDocument,
     DossierStatus,
 )
-from ehealth.models.core import Person
+from ehealth.models.core import Person, PersonRoleKind
 from ehealth.services.access import AuthorizedAccess
 from ehealth.services.audit import ActorContext, AuditLedger
 from ehealth.services.changelog import ChangeTracker, snapshot
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ehealth.services.persons import PersonService
 
 
 class DossierError(Exception):
@@ -55,11 +59,13 @@ class DossierService:
         self,
         ledger: AuditLedger,
         tracker: ChangeTracker,
+        persons: "PersonService | None" = None,
         *,
         retention_years: int = 20,
     ) -> None:
         self._ledger = ledger
         self._tracker = tracker
+        self._persons = persons
         self._retention_years = retention_years
 
     # -- lifecycle --------------------------------------------------------
@@ -73,7 +79,9 @@ class DossierService:
         home_community: str | None = None,
         default_confidentiality: Confidentiality = Confidentiality.NORMAL,
     ) -> Dossier:
-        if not patient.is_patient():
+        if self._persons is not None and not self._persons.has_role(
+            session, patient.uid, PersonRoleKind.PATIENT
+        ):
             raise DossierError("only a patient can have a dossier")
         existing = self.for_patient(session, patient.uid)
         if existing is not None:
@@ -165,7 +173,10 @@ class DossierService:
             confidentiality=document.confidentiality.value,
             status=DocumentStatus.CURRENT.value,
             author_uid=author.uid,
-            author_organization_uid=author.organization_uid,
+            # The institution comes from the author's live practice licence,
+            # not from a column on the person: where someone practises can
+            # change without their identity changing.
+            author_organization_uid=self._organization_of(session, author.uid),
             content_hash=content_hash,
             content_size=len(document.content),
             storage_ref=document.storage_ref,
@@ -307,6 +318,12 @@ class DossierService:
             reason=reason,
         )
         return document
+
+    def _organization_of(self, session: Session, person_uid: str) -> str | None:
+        if self._persons is None:
+            return None
+        credential = self._persons.active_credential(session, person_uid)
+        return credential.organization_uid if credential else None
 
     def _touch_retention(self, session: Session, dossier: Dossier) -> None:
         """Retention runs from the *last* entry, so every write pushes it out."""

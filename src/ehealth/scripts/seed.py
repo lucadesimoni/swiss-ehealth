@@ -11,19 +11,24 @@ pieces fit together.
 
 from __future__ import annotations
 
+import datetime as dt
 import sys
 
 from ehealth.config import Settings
 from ehealth.container import build_container
 from ehealth.db import create_all, get_session_factory, init_engine
 from ehealth.models.base import Confidentiality, Purpose
-from ehealth.models.clinical import MedicationEventKind
-from ehealth.models.core import PersonKind
+from ehealth.models.clinical import DispensingCategory, MedicationEventKind
+from ehealth.models.core import (
+    MedicalProfession,
+    PersonRoleKind,
+    ProfessionalRegister,
+)
 from ehealth.security.tokens import Scope
 from ehealth.services.audit import ActorContext
 from ehealth.services.dossier import DocumentInput
 from ehealth.services.medication import ProductInput, StatementInput
-from ehealth.services.persons import PersonRegistration
+from ehealth.services.persons import CredentialRegistration, PersonRegistration
 
 ANNA = "756.1234.5678.97"
 BEAT = "756.9217.0769.85"
@@ -50,7 +55,7 @@ def main() -> int:
         patient = container.persons.register(
             db,
             PersonRegistration(
-                kind=PersonKind.PATIENT,
+                roles=[PersonRoleKind.PATIENT],
                 given_name="Anna",
                 family_name="Muster",
                 ahvn13=ANNA,
@@ -61,20 +66,38 @@ def main() -> int:
         doctor = container.persons.register(
             db,
             PersonRegistration(
-                kind=PersonKind.HEALTHCARE_PROFESSIONAL,
+                # Beat is a physician *and* a patient here: one person, one
+                # UID, one pseudonym, two roles.
+                roles=[PersonRoleKind.PATIENT],
                 given_name="Beat",
                 family_name="Arzt",
                 ahvn13=BEAT,
-                gln="7601000000002",
-                profession="Allgemeine Innere Medizin",
-                organization_uid=organization.uid,
             ),
             actor,
+        )
+        credential = container.persons.register_credential(
+            db,
+            doctor,
+            actor,
+            CredentialRegistration(
+                gln="7601000000002",
+                register=ProfessionalRegister.MEDREG,
+                profession=MedicalProfession.PHYSICIAN,
+                specialisation="Facharzt Allgemeine Innere Medizin",
+                licence_canton="ZH",
+                licence_number="ZH-2019-04412",
+                licence_valid_from=dt.date(2019, 5, 1),
+                zsr_number="A123456",
+                organization_uid=organization.uid,
+            ),
+        )
+        container.persons.verify_credential(
+            db, credential, actor, source="MedReg", evidence={"checked": "demo"}
         )
         visitor = container.persons.register(
             db,
             PersonRegistration(
-                kind=PersonKind.VISITOR,
+                roles=[PersonRoleKind.VISITOR],
                 given_name="Carla",
                 family_name="Besuch",
                 ahvn13=CARLA,
@@ -84,9 +107,15 @@ def main() -> int:
         from ehealth.domain.uid import format_spid
 
         print(f"  institution  {organization.uid}  {organization.name}")
-        print(f"  patient      {patient.uid}  spid {format_spid(patient.spid)}")
-        print(f"  professional {doctor.uid}  spid {format_spid(doctor.spid)}")
-        print(f"  visitor      {visitor.uid}  spid {format_spid(visitor.spid)}")
+        print(f"  patient      {patient.uid}")
+        print(f"    EPR-SPID   {format_spid(patient.spid)}  (18 digits)")
+        print(f"  professional {doctor.uid}")
+        print(f"    EPR-SPID   {format_spid(doctor.spid)}")
+        print(f"    GLN        {credential.gln}  MedReg, {credential.specialisation}")
+        print(f"    licence    {credential.licence_canton} "
+              f"{credential.licence_number}, verified {credential.verified_at:%Y-%m-%d}")
+        print(f"    roles      {', '.join(sorted(r.role for r in container.persons.roles(db, doctor.uid)))}")
+        print(f"  visitor      {visitor.uid}")
         print(f"\n  the AHV number {ANNA} is now stored nowhere:")
         print(f"    ppid   {patient.ppid}")
         print(f"    index  {patient.lookup_index}")
@@ -149,6 +178,10 @@ def main() -> int:
                 strength="10 mg",
                 package_size="30 Stk",
                 swissmedic_authorisation="55123",
+                pharmacode="1234567",
+                dispensing_category=DispensingCategory.B,
+                sl_listed=True,
+                sl_number="55123.01",
             ),
         )
         prescription = container.medications.record(
@@ -210,6 +243,7 @@ def main() -> int:
             purpose=Purpose.TREATMENT,
             # Write scopes are requested and silently clamped away.
             scopes=[Scope.DOSSIER_READ, Scope.MEDICATION_READ, Scope.DOCUMENT_WRITE],
+            grantee_role=PersonRoleKind.VISITOR,
             ttl_seconds=7200,
             max_uses=10,
         )

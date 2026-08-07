@@ -21,13 +21,13 @@ The single most important design decision in this codebase is what happens to
 the AHV number.
 
 ```
-   756.1234.5678.97          the AHVN13, supplied once at registration
+   756.1234.5678.97           the AHVN13 — 13 digits, supplied once
           │
           │  HMAC-SHA256 under the sector key (HSM/KMS in production)
           ├──────────────────► ppid    p1_x7Kf…  256-bit linkage key, the join
           │                              key for all health data
-          ├──────────────────► spid    761.4820.9173.6   13-digit sector id,
-          │                              allocated, for interop and display
+          ├──────────────────► spid    761252402452346988   the EPR-SPID,
+          │                              18 digits, allocated, for interop
           ├──────────────────► index   v1:9Fh2…  rotatable blind index
           │
           └──────────────────► sealed  AES-256-GCM envelope, bound to the ppid
@@ -36,32 +36,99 @@ the AHV number.
    the AHVN13 itself is discarded — it exists in no queryable column
 ```
 
+**Two lengths, two identifiers, and confusing them is the classic Swiss
+integration bug.** The AHV number is **13 digits** (`756.XXXX.XXXX.XX`, EAN-13
+check digit). The **EPR-SPID is 18 digits** (`761…`) — derived from the AHVN13
+but a different identifier for a different purpose. Both are validated
+strictly and separately, and a 13-digit value is rejected as an EPR-SPID.
+
 Why not simply key on the AHVN13? Because Swiss law deliberately does not:
 EPDG/LEPD art. 5 has the central compensation office derive a separate sector
-identifier (EPR-SPID) precisely so that a leak of health data cannot be joined
-against the pension, tax and employer systems that also key on the AHVN13, and
-AHVG art. 50g constrains who may use it systematically at all. This
-implementation reproduces that separation locally.
+identifier precisely so that a leak of health data cannot be joined against the
+pension, tax and employer systems that also key on the AHVN13, and AHVG
+art. 50g constrains who may use it systematically at all. This implementation
+reproduces that separation locally.
 
 Two identifiers come out, for two different jobs:
 
 - **`ppid`** — 256 bits, collision-free, never displayed. This is what health
   data actually hangs off.
-- **`spid`** — 13 digits in EPR-SPID shape (`761.xxxx.xxxx.xx`). Nine
-  significant digits *cannot* be collision-free for a population of millions,
-  which is exactly why the real EPR-SPID is allocated by a registry rather than
-  derived. So this one is allocated too: derivation proposes a candidate, a
-  uniqueness constraint disposes, and `IdentityService.spid_candidates` yields
-  the next candidate on collision.
+- **`spid`** — 18 digits, prefix 761, with fourteen significant digits. Still
+  *allocated* rather than merely derived — derivation proposes a candidate, a
+  uniqueness constraint disposes — because two patients sharing an identifier
+  is not a failure mode worth risking, however unlikely.
+
+In a certified EPDG deployment the EPR-SPID is **allocated by the ZAS UPI
+service**, not computed locally. Deriving it here gives a correctly shaped,
+stable identifier for a deployment not connected to the UPI; the allocation
+loop and the uniqueness constraint stay either way, so swapping in a real UPI
+client changes one method and nothing else.
 
 Re-identification is possible only where the deployment chose to keep the
 sealed copy, requires a stated legal basis, and writes its audit entry *before*
 decrypting — so an aborted disclosure still leaves a trace.
 
-Every other entity gets a type-prefixed, time-sortable UID from the same
-scheme: `pat_`, `hcp_`, `vis_`, `dos_`, `doc_`, `med_`, `mst_`, `grt_`, `cns_`.
-Passing a visitor UID where a patient UID belongs is a parse error, not a
-subtle bug.
+Every entity gets a type-prefixed, time-sortable UID: `per_`, `org_`, `dos_`,
+`doc_`, `med_`, `mst_`, `grt_`, `cns_`, `crd_`. Note there is one prefix for
+*all* natural persons — see below.
+
+## One person, several roles
+
+A physician is also somebody's patient. A nurse visits their own parent in
+hospital. A paediatrician is the legal representative of their child.
+
+Making the role a property of the person forces those people into two records
+with two pseudonyms, and a patient whose own doctor cannot see their record
+because the system split them in half is not an edge case, it is Tuesday. So
+roles are rows:
+
+```
+per_01KZE…  Beat Arzt
+   ├─ role: patient                       active since 2026-08-07
+   └─ role: healthcare_professional       active since 2026-08-07
+        └─ credential crd_01KZE…
+             GLN 7601000000002 · MedReg · Facharzt Allgemeine Innere Medizin
+             licence ZH-2019-04412 (ZH), live · ZSR A123456
+             verified against MedReg on 2026-08-07
+```
+
+Authority is therefore always a question asked of the database at the moment it
+matters, never something baked into an identifier. A doctor struck off
+yesterday does not get in today, whatever token they hold — the role and the
+licence are re-checked on every authorisation.
+
+## Identifying professionals and medicines the way Swiss law does
+
+**Professionals** — three things have to line up, and they are separate because
+they fail separately:
+
+| | What it establishes | Source |
+|---|---|---|
+| **GLN** | the identifier the EPD, e-prescriptions and e-invoicing key on | Refdata |
+| **Federal register** | that the profession is recognised at all | MedReg (MedBG art. 51 ff.), NAREG (GesBG), PsyReg (PsyG) |
+| **Cantonal licence** | that they may actually practise — this is what expires and gets suspended | the canton |
+
+The **ZSR/RCC** billing number is recorded alongside but is deliberately *not*
+part of the authority test: it says who may invoice an insurer, not who may
+treat a patient. Verification against a register is recorded with its source
+and timestamp, because "we were told" and "we checked" must never look the same
+in a health record.
+
+**Medicines** — four identifiers, because Swiss practice uses four and they
+answer different questions: the **Swissmedic authorisation number** (is it
+legally on the market, HMG art. 9), the **GTIN** (which package, scanned off
+the box), the **Pharmacode** (Refdata's article number, what logistics speaks),
+and the **ATC** (which substance class, for interaction checks across brands).
+What actually gates prescribing is the **Abgabekategorie** (A/B/D/E — category C
+is absent, having been abolished in 2019) and the **BetmVV-EDI narcotic
+schedule**.
+
+Prescribing is enforced at the write: a category A or B product needs an active
+professional role *and* a live cantonal licence for a profession that may
+prescribe. Patients can still record their own self-medication — a complete
+medication list is worth more than a tidy one. Every statement stores the
+credential and GLN it was made under, copied rather than joined, so it stays
+attributable to the licence that was live at the time.
 
 ## Tokens
 
@@ -156,14 +223,38 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 276 tests
+make test        # 350 tests
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
 
 make version         # release identity of this checkout
 make verify-version  # version numbers agree across the three files
-make release VERSION=0.2.0
+make release VERSION=0.3.0
 ```
+
+## Deploying on Swiss infrastructure
+
+```bash
+cp .env.example .env && make keygen   # paste into EHEALTH_ROOT_KEY
+GIT_REVISION=$(git rev-parse HEAD) docker compose up --build -d
+```
+
+The container runs as UID 10001 with a read-only root filesystem, all
+capabilities dropped, no compiler and no package manager — so a process that
+gets code execution has very little to work with. The build revision is stamped
+into the image, so `/version` and every audit entry name a traceable commit.
+
+A Zurich datacentre is **not** the same thing as Swiss jurisdiction: a
+US-parented provider stays subject to the CLOUD Act wherever the disks are.
+[`docs/deployment-ch.md`](docs/deployment-ch.md) covers Swiss-operated
+providers, key custody (the decision that determines whether the rest is
+meaningful), data residency enforced rather than assumed, and what to monitor.
+
+On "absolutely secure": [`SECURITY.md`](SECURITY.md) states the threat model
+including what is **not** covered — root key compromise is total, a live
+signing key can forge ledger entries, email is a weak second factor, and
+availability is someone else's job. A health record that claims to be
+absolutely secure is asking you to stop checking.
 
 `make run` uses the in-process mock identity provider and an in-memory mail
 sender, so the whole login path works without SwissID credentials. Both refuse

@@ -54,8 +54,13 @@ def _product_out(product) -> ProductOut:
         dose_form=product.dose_form,
         strength=product.strength,
         package_size=product.package_size,
-        narcotic=product.narcotic,
-        prescription_only=product.prescription_only,
+        pharmacode=product.pharmacode,
+        authorisation_status=product.authorisation_status,
+        dispensing_category=product.dispensing_category,
+        narcotic_schedule=product.narcotic_schedule,
+        requires_prescription=product.requires_prescription,
+        sl_listed=product.sl_listed,
+        sl_number=product.sl_number,
         version=product.version,
     )
 
@@ -75,6 +80,8 @@ def _statement_out(statement) -> MedicationOut:
         effective_start=statement.effective_start,
         effective_end=statement.effective_end,
         recorded_by_uid=statement.recorded_by_uid,
+        recorded_by_gln=statement.recorded_by_gln,
+        recorded_under_credential_uid=statement.recorded_under_credential_uid,
         organization_uid=statement.organization_uid,
         based_on_uid=statement.based_on_uid,
         version=statement.version,
@@ -111,8 +118,14 @@ def register_product(
                 strength=payload.strength,
                 package_size=payload.package_size,
                 marketing_authorisation_holder=payload.marketing_authorisation_holder,
-                narcotic=payload.narcotic,
-                prescription_only=payload.prescription_only,
+                marketing_authorisation_holder_gln=payload.marketing_authorisation_holder_gln,
+                pharmacode=payload.pharmacode,
+                dispensing_category=payload.dispensing_category,
+                narcotic_schedule=payload.narcotic_schedule,
+                authorisation_status=payload.authorisation_status,
+                authorisation_valid_until=payload.authorisation_valid_until,
+                sl_listed=payload.sl_listed,
+                sl_number=payload.sl_number,
             ),
         )
     except MedicationError as exc:
@@ -187,7 +200,6 @@ def record_medication(
 ):
     if access.dossier_uid != dossier_uid:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-    actor = container.persons.get(db, user.claims.subject_uid)
     try:
         statement = container.medications.record(
             db,
@@ -204,8 +216,7 @@ def record_medication(
                 confidentiality=payload.confidentiality,
                 based_on_uid=payload.based_on_uid,
             ),
-            recorded_by_uid=actor.uid,
-            organization_uid=actor.organization_uid,
+            recorded_by_uid=user.claims.subject_uid,
         )
     except MedicationError as exc:
         raise HTTPException(

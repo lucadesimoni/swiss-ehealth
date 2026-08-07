@@ -23,7 +23,7 @@ from ehealth.api.schemas import (
     VisitorGrantCreate,
 )
 from ehealth.models.base import Confidentiality, Purpose
-from ehealth.models.core import PersonKind
+from ehealth.models.core import PersonRoleKind
 from ehealth.models.governance import AccessGrant, RuleEffect
 from ehealth.security.tokens import Scope, TokenError
 from ehealth.services.access import AccessError, ConsentError
@@ -268,10 +268,10 @@ def create_visitor_grant(
             status_code=status.HTTP_404_NOT_FOUND, detail="no dossier for this patient"
         )
     visitor = container.persons.get(db, payload.visitor_uid)
-    if PersonKind(visitor.kind) is not PersonKind.VISITOR:
+    if not container.persons.has_role(db, visitor.uid, PersonRoleKind.VISITOR):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="grantee is not registered as a visitor",
+            detail="grantee holds no active visitor role",
         )
     try:
         grant = container.access.issue_grant(
@@ -282,6 +282,7 @@ def create_visitor_grant(
             granted_by=patient,
             purpose=Purpose.TREATMENT,
             scopes=_parse_scopes(payload.scopes),
+            grantee_role=PersonRoleKind.VISITOR,
             ttl_seconds=payload.ttl_seconds,
             max_uses=payload.max_uses,
             note=payload.note,
@@ -371,6 +372,7 @@ def self_capability(db: DbDep, container: ContainerDep, user: CurrentUserDep):
         grantee=patient,
         granted_by=patient,
         purpose=Purpose.PATIENT_ACCESS,
+        grantee_role=PersonRoleKind.PATIENT,
         scopes=[
             Scope.DOSSIER_READ,
             Scope.DOSSIER_WRITE,
@@ -409,7 +411,9 @@ def emergency_access(
     SECRET. A justification is mandatory and is recorded verbatim.
     """
     professional = container.persons.get(db, user.claims.subject_uid)
-    if not professional.is_professional():
+    if not container.persons.has_role(
+        db, professional.uid, PersonRoleKind.HEALTHCARE_PROFESSIONAL
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="only healthcare professionals may invoke emergency access",

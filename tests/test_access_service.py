@@ -17,6 +17,7 @@ from sqlalchemy import select
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditEvent
 from ehealth.models.base import Confidentiality, Purpose
+from ehealth.models.core import PersonRoleKind
 from ehealth.models.governance import GrantStatus, IssuedToken, RuleEffect
 from ehealth.security.tokens import Scope
 from ehealth.services.access import AccessError
@@ -138,6 +139,7 @@ class TestVisitorGrants:
             granted_by=world.patient,
             purpose=Purpose.TREATMENT,
             scopes=[Scope.DOSSIER_READ, Scope.DOCUMENT_WRITE, Scope.MEDICATION_WRITE],
+            grantee_role=PersonRoleKind.VISITOR,
             max_uses=3,
         )
         assert set(grant.scopes) == {"dossier:read"}
@@ -156,6 +158,7 @@ class TestVisitorGrants:
                 granted_by=world.doctor,
                 purpose=Purpose.TREATMENT,
                 scopes=[Scope.DOSSIER_READ],
+                grantee_role=PersonRoleKind.VISITOR,
             )
 
     def test_refuses_when_no_permissible_scope_remains(
@@ -170,6 +173,7 @@ class TestVisitorGrants:
                 granted_by=world.patient,
                 purpose=Purpose.TREATMENT,
                 scopes=[Scope.DOSSIER_WRITE],
+                grantee_role=PersonRoleKind.VISITOR,
             )
 
     def test_visitor_access_expires_and_is_use_capped(
@@ -183,6 +187,7 @@ class TestVisitorGrants:
             granted_by=world.patient,
             purpose=Purpose.TREATMENT,
             scopes=[Scope.DOSSIER_READ],
+            grantee_role=PersonRoleKind.VISITOR,
             ttl_seconds=3600,
             max_uses=2,
         )
@@ -438,6 +443,7 @@ class TestConfidentialityFiltering:
             grantee=world.patient,
             granted_by=world.patient,
             purpose=Purpose.PATIENT_ACCESS,
+            grantee_role=PersonRoleKind.PATIENT,
             scopes=[
                 Scope.DOSSIER_READ,
                 Scope.DOCUMENT_READ,
@@ -509,6 +515,8 @@ class TestConfidentialityFiltering:
     def test_medication_is_filtered_the_same_way(
         self, container, db, world, patient_access, doctor_token
     ):
+        # Both are self-reported: a patient may record their own medication,
+        # but not write themselves a prescription — see TestPrescribingAuthority.
         container.medications.record(
             db,
             patient_access,
@@ -523,7 +531,7 @@ class TestConfidentialityFiltering:
             db,
             patient_access,
             StatementInput(
-                kind=MedicationEventKind.PRESCRIPTION,
+                kind=MedicationEventKind.SELF_REPORTED,
                 product_text="Lisinopril 10mg",
             ),
             recorded_by_uid=world.patient.uid,

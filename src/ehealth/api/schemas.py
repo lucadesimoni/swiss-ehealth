@@ -15,8 +15,18 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from ehealth.domain.uid import Ahvn13, format_spid
 from ehealth.models.base import Confidentiality, Purpose
-from ehealth.models.clinical import MedicationEventKind
-from ehealth.models.core import IdentificationMethod, PersonKind
+from ehealth.models.clinical import (
+    AuthorisationStatus,
+    DispensingCategory,
+    MedicationEventKind,
+    NarcoticSchedule,
+)
+from ehealth.models.core import (
+    IdentificationMethod,
+    MedicalProfession,
+    PersonRoleKind,
+    ProfessionalRegister,
+)
 from ehealth.models.governance import RuleEffect
 
 Ahvn13Str = Annotated[str, Field(examples=["756.1234.5678.97"])]
@@ -56,7 +66,9 @@ class OrganizationOut(BaseModel):
 
 
 class PersonCreate(StrictModel):
-    kind: PersonKind
+    #: A person may be registered with several roles at once — a physician who
+    #: is also a patient here is one record, not two.
+    roles: list[PersonRoleKind] = Field(default_factory=list)
     given_name: str = Field(min_length=1, max_length=120)
     family_name: str = Field(min_length=1, max_length=120)
     ahvn13: Ahvn13Str | None = None
@@ -66,9 +78,7 @@ class PersonCreate(StrictModel):
     phone: str | None = None
     identification_method: IdentificationMethod = IdentificationMethod.AHVN13
     id_document: str | None = None
-    gln: str | None = None
-    profession: str | None = None
-    organization_uid: str | None = None
+    veka_number: str | None = Field(default=None, max_length=24)
 
     @field_validator("ahvn13")
     @classmethod
@@ -83,8 +93,8 @@ class PersonCreate(StrictModel):
 
 class PersonOut(BaseModel):
     uid: str
-    kind: str
     status: str
+    roles: list[str] = Field(default_factory=list)
     spid: str | None = None
     given_name: str | None = None
     family_name: str | None = None
@@ -92,9 +102,7 @@ class PersonOut(BaseModel):
     administrative_sex: str | None = None
     email: str | None = None
     phone: str | None = None
-    gln: str | None = None
-    profession: str | None = None
-    organization_uid: str | None = None
+    veka_number: str | None = None
     identification_method: str
     version: int
 
@@ -113,6 +121,63 @@ class ContactUpdate(StrictModel):
     email: EmailStr | None = None
     phone: str | None = None
     reason: str | None = Field(default=None, max_length=500)
+
+
+class RoleGrant(StrictModel):
+    role: PersonRoleKind
+    valid_until: datetime | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RoleOut(BaseModel):
+    uid: str
+    role: str
+    status: str
+    valid_from: datetime
+    valid_until: datetime | None
+
+
+class CredentialCreate(StrictModel):
+    """A professional's licence to practise, as Swiss law records it."""
+
+    gln: str = Field(min_length=13, max_length=13, pattern=r"^\d{13}$")
+    professional_register: ProfessionalRegister
+    profession: MedicalProfession
+    specialisation: str | None = Field(default=None, max_length=160)
+    licence_canton: str | None = Field(default=None, min_length=2, max_length=2)
+    licence_number: str | None = Field(default=None, max_length=64)
+    licence_valid_from: date | None = None
+    licence_valid_until: date | None = None
+    zsr_number: str | None = Field(default=None, max_length=8)
+    organization_uid: str | None = None
+
+
+class CredentialVerify(StrictModel):
+    #: Which register the check was made against, e.g. "MedReg" or "Refdata".
+    source: str = Field(min_length=2, max_length=80)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class CredentialOut(BaseModel):
+    uid: str
+    person_uid: str
+    gln: str
+    professional_register: str
+    profession: str
+    specialisation: str | None
+    licence_canton: str | None
+    licence_number: str | None
+    licence_valid_from: date | None
+    licence_valid_until: date | None
+    licence_suspended: bool
+    zsr_number: str | None
+    organization_uid: str | None
+    verified_at: datetime | None
+    verification_source: str | None
+    #: Computed, not stored: whether this credential carries prescribing
+    #: authority today.
+    may_prescribe: bool
+    version: int
 
 
 # --------------------------------------------------------------------------
@@ -335,15 +400,23 @@ class DocumentOut(BaseModel):
 class ProductCreate(StrictModel):
     gtin: str = Field(min_length=8, max_length=14, pattern=r"^\d+$")
     name: str = Field(min_length=1, max_length=240)
-    swissmedic_authorisation: str | None = None
+    #: Swissmedic authorisation number (HMG art. 9), e.g. "62536" or "62536-001".
+    swissmedic_authorisation: str | None = Field(default=None, max_length=12)
+    #: Refdata article number.
+    pharmacode: str | None = Field(default=None, max_length=7)
     active_ingredient: str | None = None
     atc_code: str | None = Field(default=None, max_length=12)
     dose_form: str | None = None
     strength: str | None = None
     package_size: str | None = None
     marketing_authorisation_holder: str | None = None
-    narcotic: bool = False
-    prescription_only: bool = True
+    marketing_authorisation_holder_gln: str | None = Field(default=None, max_length=13)
+    dispensing_category: DispensingCategory = DispensingCategory.B
+    narcotic_schedule: NarcoticSchedule = NarcoticSchedule.NONE
+    authorisation_status: AuthorisationStatus = AuthorisationStatus.AUTHORISED
+    authorisation_valid_until: date | None = None
+    sl_listed: bool = False
+    sl_number: str | None = Field(default=None, max_length=20)
 
 
 class ProductOut(BaseModel):
@@ -351,13 +424,18 @@ class ProductOut(BaseModel):
     gtin: str
     name: str
     swissmedic_authorisation: str | None
+    pharmacode: str | None
+    authorisation_status: str
     active_ingredient: str | None
     atc_code: str | None
     dose_form: str | None
     strength: str | None
     package_size: str | None
-    narcotic: bool
-    prescription_only: bool
+    dispensing_category: str
+    narcotic_schedule: str
+    requires_prescription: bool
+    sl_listed: bool
+    sl_number: str | None
     version: int
 
 
@@ -388,6 +466,10 @@ class MedicationOut(BaseModel):
     effective_start: datetime | None
     effective_end: datetime | None
     recorded_by_uid: str
+    #: GLN of the professional and the credential the entry was made under, so
+    #: a prescription stays attributable to the licence that was live then.
+    recorded_by_gln: str | None
+    recorded_under_credential_uid: str | None
     organization_uid: str | None
     based_on_uid: str | None
     version: int

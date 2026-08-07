@@ -86,15 +86,17 @@ def ulid_timestamp_ms(ulid: str) -> int:
 #: Registry of entity prefixes. Adding an entity type means adding it here, so
 #: the set of things that can exist in the system is enumerable in one place.
 UID_PREFIXES: Final[dict[str, str]] = {
-    "pat": "patient",
-    "hcp": "healthcare professional",
+    #: Every natural person, whatever roles they hold. A physician who is also
+    #: a patient is one person with one UID; which roles they may act in is a
+    #: database question (``person_role``), not a syntactic one.
+    "per": "person",
     "org": "healthcare institution",
-    "vis": "visitor",
     "dos": "dossier",
     "doc": "dossier document",
     "med": "medicinal product",
     "mst": "medication statement",
     "cns": "consent",
+    "crd": "professional credential",
     "grt": "access grant",
     "ses": "authentication session",
     "usr": "identity account",
@@ -219,34 +221,102 @@ class Ahvn13:
     __str__ = __repr__
 
 
+# --------------------------------------------------------------------------
+# EPR-SPID — the patient identifier of the electronic patient record
+# --------------------------------------------------------------------------
+
+#: The EPR-SPID is **18 digits**, prefix 761 — not 13 like the AHVN13 it is
+#: derived from. Mixing the two lengths up is the single most common error in
+#: Swiss e-health integrations, so both are validated strictly and separately.
+SPID_LENGTH: Final = 18
+SPID_PREFIX: Final = "761"
+
+#: Digits the derivation may fill: prefix (3) + body (14) + check digit (1).
+SPID_BODY_LENGTH: Final = SPID_LENGTH - len(SPID_PREFIX) - 1
+
+
+def _mod10_check_digit(digits: str) -> int:
+    """GS1 mod-10 check digit, weights alternating 3/1 from the right.
+
+    The same scheme EAN-13 uses, stated for an arbitrary length so it works
+    for the 18 digit SPID as well as for 13 digit GTINs.
+    """
+    total = sum(
+        int(d) * (3 if (len(digits) - i) % 2 else 1) for i, d in enumerate(digits)
+    )
+    return (10 - total % 10) % 10
+
+
 def format_spid(digits: str) -> str:
-    """Format a 13 digit sector identifier as ``761.xxxx.xxxx.xx``."""
-    if len(digits) != 13 or not digits.isdigit():
-        raise IdentifierError("SPID must be 13 digits")
-    return f"{digits[0:3]}.{digits[3:7]}.{digits[7:11]}.{digits[11:13]}"
+    """Normalise an EPR-SPID to its canonical 18 digit form.
+
+    The EPR-SPID is written without separators — unlike the AHVN13, which is
+    conventionally dotted. Keeping the two visually distinct is deliberate:
+    a human reading a record should never have to count digits to know which
+    identifier they are looking at.
+    """
+    digits = (digits or "").replace(".", "").replace(" ", "")
+    if len(digits) != SPID_LENGTH or not digits.isdigit():
+        raise IdentifierError(f"EPR-SPID must be {SPID_LENGTH} digits")
+    if not digits.startswith(SPID_PREFIX):
+        raise IdentifierError(f"EPR-SPID must start with {SPID_PREFIX}")
+    return digits
 
 
-def spid_from_entropy(entropy: bytes, prefix: str = "761") -> str:
-    """Build a syntactically valid 13 digit sector identifier from entropy.
+def spid_from_entropy(entropy: bytes, prefix: str = SPID_PREFIX) -> str:
+    """Build a syntactically valid 18 digit EPR-SPID from entropy.
 
-    Layout mirrors the EPR-SPID: a three digit prefix, nine derived digits and
-    an EAN-13 check digit. The derivation is done by the caller (see
-    :mod:`ehealth.domain.identity`); this function only handles the encoding.
+    Layout: three digit prefix, fourteen derived digits, one mod-10 check
+    digit. Fourteen significant digits make collisions a non-issue at any
+    realistic population size, which is what the 13 digit version got wrong.
+
+    This produces an identifier of the right *shape*. In a real EPDG
+    deployment the SPID is **allocated by the ZAS UPI service**, not derived
+    locally — see :class:`~ehealth.domain.identity.SpidProvider` for the seam
+    where that client belongs.
     """
     if len(prefix) != 3 or not prefix.isdigit():
-        raise IdentifierError("SPID prefix must be three digits")
-    if len(entropy) < 8:
-        raise IdentifierError("need at least 64 bits of entropy")
-    body = f"{int.from_bytes(entropy[:8], 'big') % 10**9:09d}"
+        raise IdentifierError("EPR-SPID prefix must be three digits")
+    if len(entropy) < 16:
+        raise IdentifierError("need at least 128 bits of entropy")
+    body = f"{int.from_bytes(entropy[:16], 'big') % 10**SPID_BODY_LENGTH:0{SPID_BODY_LENGTH}d}"
     partial = prefix + body
-    return partial + str(_ean13_check_digit(partial))
+    return partial + str(_mod10_check_digit(partial))
 
 
 def is_valid_spid(raw: str) -> bool:
-    digits = (raw or "").replace(".", "")
-    if len(digits) != 13 or not digits.isdigit():
+    digits = (raw or "").replace(".", "").replace(" ", "")
+    if len(digits) != SPID_LENGTH or not digits.isdigit():
         return False
-    return int(digits[12]) == _ean13_check_digit(digits)
+    if not digits.startswith(SPID_PREFIX):
+        return False
+    return int(digits[-1]) == _mod10_check_digit(digits[:-1])
+
+
+# --------------------------------------------------------------------------
+# VeKa — the health insurance card number (KVG)
+# --------------------------------------------------------------------------
+
+#: 20 digits beginning 80756: "80" for health insurance, "756" for
+#: Switzerland, per the Versichertenkarte specification under KVG/KVV.
+VEKA_LENGTH: Final = 20
+VEKA_PREFIX: Final = "80756"
+
+
+def is_valid_veka(raw: str) -> bool:
+    """Structural validation of a health insurance card number.
+
+    Length and prefix only. The check digit scheme of the VeKa number is not
+    reproduced here because getting it wrong would silently reject valid
+    cards; a deployment that needs full validation should implement it against
+    the current Versichertenkarte specification and replace this function.
+    """
+    digits = (raw or "").replace(".", "").replace(" ", "")
+    return (
+        len(digits) == VEKA_LENGTH
+        and digits.isdigit()
+        and digits.startswith(VEKA_PREFIX)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -303,10 +373,96 @@ def is_valid_gtin(raw: str) -> bool:
     digits = (raw or "").strip()
     if not digits.isdigit() or len(digits) not in (8, 12, 13, 14):
         return False
-    body, check = digits[:-1], int(digits[-1])
-    # Weights alternate 3/1 from the right-hand side.
-    total = sum(int(d) * (3 if (len(body) - i) % 2 else 1) for i, d in enumerate(body))
-    return (10 - total % 10) % 10 == check
+    return int(digits[-1]) == _mod10_check_digit(digits[:-1])
+
+
+# --------------------------------------------------------------------------
+# Healthcare professionals — the identifiers Swiss law and practice use
+# --------------------------------------------------------------------------
+
+
+def is_valid_gln(raw: str) -> bool:
+    """A GLN is a GTIN-13 and carries the same check digit.
+
+    Every professional listed in MedReg (MedBG art. 51 ff.), NAREG (GesBG) or
+    PsyReg (PsyG) carries one, administered by Refdata. It is the identifier
+    the EPD, e-prescriptions and e-invoicing all key on, which makes it the
+    right primary handle for a professional here.
+    """
+    digits = (raw or "").strip()
+    return len(digits) == 13 and digits.isdigit() and is_valid_gtin(digits)
+
+
+#: ZSR / RCC — the billing number issued by SASIS, one uppercase letter
+#: followed by six digits (e.g. ``A123456``). Required to invoice a Swiss
+#: insurer under KVG; it says nothing about clinical authority, which is why
+#: it is recorded separately from the practice licence.
+_ZSR_RE: Final = re.compile(r"^([A-Z])\.?(\d{6})$")
+
+
+def normalise_zsr(raw: str) -> str:
+    match = _ZSR_RE.match((raw or "").strip().upper().replace(" ", ""))
+    if not match:
+        raise IdentifierError("ZSR/RCC number must look like A123456")
+    return f"{match.group(1)}{match.group(2)}"
+
+
+def is_valid_zsr(raw: str) -> bool:
+    try:
+        normalise_zsr(raw)
+    except IdentifierError:
+        return False
+    return True
+
+
+# --------------------------------------------------------------------------
+# Medicinal products — Swissmedic and Refdata identifiers
+# --------------------------------------------------------------------------
+
+#: Swissmedic authorisation number (Zulassungsnummer) under HMG art. 9 ff.
+#: Five digits, optionally with a package suffix, e.g. ``62536`` or
+#: ``62536 001``. Digits only after normalisation.
+_SWISSMEDIC_RE: Final = re.compile(r"^(\d{5})[\s.-]?(\d{1,3})?$")
+
+
+def normalise_swissmedic_authorisation(raw: str) -> str:
+    """Return ``NNNNN`` or ``NNNNN-SSS`` for an authorisation number."""
+    match = _SWISSMEDIC_RE.match((raw or "").strip())
+    if not match:
+        raise IdentifierError(
+            "Swissmedic authorisation number must be five digits, "
+            "optionally with a package suffix"
+        )
+    base, suffix = match.groups()
+    return f"{base}-{int(suffix):03d}" if suffix else base
+
+
+def is_valid_swissmedic_authorisation(raw: str) -> bool:
+    try:
+        normalise_swissmedic_authorisation(raw)
+    except IdentifierError:
+        return False
+    return True
+
+
+def is_valid_pharmacode(raw: str) -> bool:
+    """Refdata Pharmacode: the Swiss article number, up to seven digits.
+
+    No check digit exists, so this is a format check only — stated plainly
+    rather than implied, because a validator that looks stricter than it is
+    invites misplaced trust.
+    """
+    digits = (raw or "").strip().lstrip("0")
+    return bool(digits) and digits.isdigit() and len(digits) <= 7
+
+
+#: ATC (WHO): one letter, two digits, two letters, two digits — e.g. C09AA03.
+#: Prefixes are valid too; a product may be classified at any depth.
+_ATC_RE: Final = re.compile(r"^[A-Z](\d{2}([A-Z]([A-Z](\d{2})?)?)?)?$")
+
+
+def is_valid_atc(raw: str) -> bool:
+    return bool(_ATC_RE.match((raw or "").strip().upper()))
 
 
 def random_token(nbytes: int = 32) -> str:

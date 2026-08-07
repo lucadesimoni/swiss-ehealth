@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,7 +36,7 @@ from ehealth.models.auth import (
     OtpChallenge,
     SessionState,
 )
-from ehealth.models.core import Person, PersonKind
+from ehealth.models.core import Person, PersonRoleKind
 from ehealth.models.governance import IssuedToken, TokenKind
 from ehealth.security.crypto import KeyPurpose, KeyRing
 from ehealth.security.mfa import OtpService
@@ -48,22 +48,25 @@ from ehealth.services.audit import (
     commit_security_event,
 )
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ehealth.services.persons import PersonService
+
 #: What a logged-in person may do with their session token alone, before any
 #: dossier-specific capability is minted.
-SESSION_SCOPES: dict[PersonKind, tuple[Scope, ...]] = {
-    PersonKind.PATIENT: (
+SESSION_SCOPES: dict[PersonRoleKind, tuple[Scope, ...]] = {
+    PersonRoleKind.PATIENT: (
         Scope.PERSON_READ,
         Scope.CONSENT_READ,
         Scope.CONSENT_WRITE,
         Scope.GRANT_MANAGE,
         Scope.AUDIT_READ,
     ),
-    PersonKind.HEALTHCARE_PROFESSIONAL: (
+    PersonRoleKind.HEALTHCARE_PROFESSIONAL: (
         Scope.PERSON_READ,
         Scope.GRANT_MANAGE,
     ),
-    PersonKind.VISITOR: (Scope.PERSON_READ,),
-    PersonKind.REPRESENTATIVE: (Scope.PERSON_READ, Scope.GRANT_MANAGE),
+    PersonRoleKind.VISITOR: (Scope.PERSON_READ,),
+    PersonRoleKind.REPRESENTATIVE: (Scope.PERSON_READ, Scope.GRANT_MANAGE),
 }
 
 OIDC_FLOW_TTL_SECONDS = 600
@@ -113,6 +116,7 @@ class AuthService:
         identity: IdentityService,
         keyring: KeyRing,
         ledger: AuditLedger,
+        persons: "PersonService",
         session_ttl_seconds: int = 900,
         refresh_ttl_seconds: int = 43_200,
         otp_max_attempts: int = 5,
@@ -124,6 +128,7 @@ class AuthService:
         self._identity = identity
         self._keyring = keyring
         self._ledger = ledger
+        self._persons = persons
         self._session_ttl = session_ttl_seconds
         self._refresh_ttl = refresh_ttl_seconds
         self._otp_max_attempts = otp_max_attempts
@@ -463,7 +468,19 @@ class AuthService:
         person = session.get(Person, auth_session.person_uid)
         if person is None:
             raise AuthError("session references an unknown person")
-        scopes = list(SESSION_SCOPES.get(PersonKind(person.kind), (Scope.PERSON_READ,)))
+        # A person holding several roles gets the union of their scopes: the
+        # physician who is also a patient manages their own consent *and* is
+        # offered grants, from one session.
+        roles = [
+            PersonRoleKind(role.role)
+            for role in self._persons.roles(session, person.uid)
+            if role.is_live(now_roles := utcnow())
+        ]
+        granted: set[Scope] = {Scope.PERSON_READ}
+        for role in roles:
+            granted.update(SESSION_SCOPES.get(role, ()))
+        scopes = sorted(granted, key=lambda s: s.value)
+        del now_roles
         now = utcnow()
 
         access_jti = new_uid("ses")
@@ -473,9 +490,11 @@ class AuthService:
             issuer=self._tokens.issuer,
             subject_uid=person.uid,
             audience=self._tokens.audience,
-            purpose="patient_access"
-            if person.is_patient()
-            else "administration",
+            purpose=(
+                "patient_access"
+                if PersonRoleKind.PATIENT in roles
+                else "administration"
+            ),
             scopes=scopes,
             issued_at=now,
             not_before=now,
@@ -483,7 +502,13 @@ class AuthService:
             session_uid=auth_session.uid,
             access_level="normal",
             assurance_level=auth_session.assurance_level,
-            organization_uid=person.organization_uid,
+            # The institution follows the live practice licence, so a session
+            # token reflects where the professional actually works today.
+            organization_uid=(
+                credential.organization_uid
+                if (credential := self._persons.active_credential(session, person.uid))
+                else None
+            ),
         )
         access_token = self._tokens.issue(access_claims)
 

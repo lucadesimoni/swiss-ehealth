@@ -100,7 +100,8 @@ def build_container(settings: Settings | None = None) -> Container:
         )
     )
 
-    consents = ConsentService(ledger, tracker)
+    persons = PersonService(identity, ledger, tracker)
+    consents = ConsentService(ledger, tracker, persons)
     return Container(
         settings=settings,
         keyring=keyring,
@@ -108,19 +109,22 @@ def build_container(settings: Settings | None = None) -> Container:
         ledger=ledger,
         tracker=tracker,
         tokens=tokens,
-        persons=PersonService(identity, ledger, tracker),
+        persons=persons,
         organizations=OrganizationService(ledger, tracker),
         dossiers=DossierService(
-            ledger, tracker, retention_years=settings.dossier_retention_years
+            ledger, tracker, persons, retention_years=settings.dossier_retention_years
         ),
         catalogue=MedicationCatalogue(ledger, tracker),
-        medications=MedicationService(ledger, tracker),
+        # The medication service asks the person registry whether the author
+        # holds a live practice licence before accepting a prescription.
+        medications=MedicationService(ledger, tracker, persons),
         consents=consents,
         access=AccessService(
             tokens,
             consents,
             ledger,
             tracker,
+            persons,
             capability_ttl_seconds=settings.capability_token_ttl_seconds,
             visitor_ttl_seconds=settings.visitor_token_ttl_seconds,
             emergency_ttl_seconds=settings.emergency_token_ttl_seconds,
@@ -137,6 +141,7 @@ def build_container(settings: Settings | None = None) -> Container:
             identity=identity,
             keyring=keyring,
             ledger=ledger,
+            persons=persons,
             session_ttl_seconds=settings.session_token_ttl_seconds,
             refresh_ttl_seconds=settings.refresh_token_ttl_seconds,
             otp_max_attempts=settings.otp_max_attempts,

@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Local stack for development and for a first deployment on a single Swiss VM.
+# The hardening here is not decoration: read-only root filesystem, dropped
+# capabilities and no privilege escalation are what keep a compromised web
+# process from becoming a compromised host.
+#
+#   make keygen                        # then put it in .env as EHEALTH_ROOT_KEY
+#   docker compose up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ehealth
+      POSTGRES_USER: ehealth
+      # Compose reads this from .env; there is no default on purpose.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # C collation keeps index behaviour identical across hosts.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ehealth -d ehealth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    # Not published to the host: only the application reaches the database.
+    expose:
+      - "5432"
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      args:
+        GIT_REVISION: ${GIT_REVISION:-unknown}
+        BUILD_TIMESTAMP: ${BUILD_TIMESTAMP:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      EHEALTH_ENVIRONMENT: ${EHEALTH_ENVIRONMENT:-staging}
+      EHEALTH_DATABASE_URL: postgresql+psycopg://ehealth:${POSTGRES_PASSWORD}@db:5432/ehealth
+      EHEALTH_ROOT_KEY: ${EHEALTH_ROOT_KEY:?set EHEALTH_ROOT_KEY in .env, see make keygen}
+      EHEALTH_ISSUER: ${EHEALTH_ISSUER:-https://dossier.example.ch}
+      EHEALTH_DATA_REGION: ${EHEALTH_DATA_REGION:-ch}
+      EHEALTH_ADMIN_API_KEY: ${EHEALTH_ADMIN_API_KEY:-}
+      EHEALTH_USE_MOCK_IDP: ${EHEALTH_USE_MOCK_IDP:-true}
+      EHEALTH_SWISSID_CLIENT_ID: ${EHEALTH_SWISSID_CLIENT_ID:-}
+      EHEALTH_SWISSID_CLIENT_SECRET: ${EHEALTH_SWISSID_CLIENT_SECRET:-}
+      EHEALTH_SMTP_HOST: ${EHEALTH_SMTP_HOST:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Nothing writes to disk inside the container, so it does not need a
+    # writable filesystem. /tmp is a small tmpfs for gunicorn's worker files.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  db-data:

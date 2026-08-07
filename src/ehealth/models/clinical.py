@@ -118,23 +118,94 @@ class DossierDocument(Base, TimestampMixin, VersionMixin, UidPk):
 # --------------------------------------------------------------------------
 
 
-class MedicinalProduct(Base, TimestampMixin, VersionMixin, UidPk):
-    """A marketed medicinal product package.
+class DispensingCategory(StrEnum):
+    """Swissmedic dispensing categories (Abgabekategorien) under HMG/AMBV.
 
-    Keyed on the GTIN carried by the package barcode, cross-referenced to the
-    Swissmedic authorisation number and the ATC code so the same substance can
-    be recognised across brands and pack sizes.
+    Category C was abolished in 2019 and its products reassigned to B or D; it
+    is absent here on purpose, so legacy data carrying it fails loudly at the
+    boundary instead of being silently accepted.
+    """
+
+    #: Verschärft rezeptpflichtig — single dispensing per prescription.
+    A = "A"
+    #: Rezeptpflichtig.
+    B = "B"
+    #: Abgabe nach Fachberatung, no prescription.
+    D = "D"
+    #: Freiverkäuflich.
+    E = "E"
+
+    @property
+    def requires_prescription(self) -> bool:
+        return self in (DispensingCategory.A, DispensingCategory.B)
+
+
+class NarcoticSchedule(StrEnum):
+    """BetmVV-EDI annexes. Narcotics carry stricter dispensing and audit."""
+
+    NONE = "none"
+    #: Verzeichnis a — controlled substances, full control.
+    A = "a"
+    #: Verzeichnis b — partially excepted.
+    B = "b"
+    #: Verzeichnis c — partially excepted, lower risk.
+    C = "c"
+    #: Verzeichnis d — prohibited substances.
+    D = "d"
+
+    @property
+    def is_narcotic(self) -> bool:
+        return self is not NarcoticSchedule.NONE
+
+
+class AuthorisationStatus(StrEnum):
+    """Swissmedic marketing authorisation state under HMG art. 9 ff."""
+
+    AUTHORISED = "authorised"
+    #: Befristete Bewilligung / Art. 9b temporary authorisation.
+    TEMPORARY = "temporary"
+    SUSPENDED = "suspended"
+    #: Withdrawn or lapsed. Never prescribable, still readable in history.
+    WITHDRAWN = "withdrawn"
+
+
+class MedicinalProduct(Base, TimestampMixin, VersionMixin, UidPk):
+    """A marketed medicinal product package, identified the way Swiss law does.
+
+    Four identifiers, because Swiss practice uses four and they answer
+    different questions:
+
+    * **Swissmedic authorisation number** — is this product legally on the
+      market at all (HMG art. 9)?
+    * **GTIN** — which package is this, scanned off the box?
+    * **Pharmacode** — Refdata's article number, what ordering and logistics
+      systems speak.
+    * **ATC** — what substance class is it, for interaction and duplicate
+      checks across brands.
+
+    The dispensing category and narcotic schedule are what actually gate
+    prescribing, which is why they are enums rather than a single boolean.
     """
 
     __tablename__ = "medicinal_product"
     __table_args__ = (
         UniqueConstraint("gtin", name="uq_medicinal_product_gtin"),
+        UniqueConstraint("pharmacode", name="uq_medicinal_product_pharmacode"),
         Index("ix_medicinal_product_atc", "atc_code"),
         Index("ix_medicinal_product_name", "name"),
+        Index("ix_medicinal_product_authorisation", "swissmedic_authorisation"),
     )
 
     gtin: Mapped[str] = mapped_column(String(14), nullable=False)
-    swissmedic_authorisation: Mapped[str | None] = mapped_column(String(20))
+    #: Five digits, optionally with a package suffix: ``62536`` / ``62536-001``.
+    swissmedic_authorisation: Mapped[str | None] = mapped_column(String(12))
+    authorisation_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=AuthorisationStatus.AUTHORISED.value
+    )
+    authorisation_valid_until: Mapped[date | None] = mapped_column(Date)
+    #: Refdata article number, up to seven digits.
+    pharmacode: Mapped[str | None] = mapped_column(String(7))
+
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     active_ingredient: Mapped[str | None] = mapped_column(String(240))
     atc_code: Mapped[str | None] = mapped_column(String(12))
@@ -142,12 +213,45 @@ class MedicinalProduct(Base, TimestampMixin, VersionMixin, UidPk):
     strength: Mapped[str | None] = mapped_column(String(80))
     package_size: Mapped[str | None] = mapped_column(String(60))
     marketing_authorisation_holder: Mapped[str | None] = mapped_column(String(200))
-    #: Betäubungsmittel — extra audit scrutiny and stricter dispensing rules.
-    narcotic: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    prescription_only: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
+    #: GLN of the authorisation holder, so the responsible company is
+    #: identifiable rather than merely named.
+    marketing_authorisation_holder_gln: Mapped[str | None] = mapped_column(String(13))
+
+    dispensing_category: Mapped[str] = mapped_column(
+        String(2), nullable=False, default=DispensingCategory.B.value
     )
+    narcotic_schedule: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=NarcoticSchedule.NONE.value
+    )
+
+    #: Spezialitätenliste (KVG art. 52) — whether compulsory health insurance
+    #: reimburses it, and under which entry.
+    sl_listed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sl_number: Mapped[str | None] = mapped_column(String(20))
+
     withdrawn_at: Mapped[date | None] = mapped_column(Date)
+
+    @property
+    def requires_prescription(self) -> bool:
+        return DispensingCategory(self.dispensing_category).requires_prescription
+
+    @property
+    def is_narcotic(self) -> bool:
+        return NarcoticSchedule(self.narcotic_schedule).is_narcotic
+
+    def is_marketable(self, on: date) -> bool:
+        """Whether the product may still be prescribed or dispensed on ``on``."""
+        if self.authorisation_status not in (
+            AuthorisationStatus.AUTHORISED.value,
+            AuthorisationStatus.TEMPORARY.value,
+        ):
+            return False
+        if self.withdrawn_at is not None and on >= self.withdrawn_at:
+            return False
+        return (
+            self.authorisation_valid_until is None
+            or on <= self.authorisation_valid_until
+        )
 
 
 class MedicationEventKind(StrEnum):
@@ -207,6 +311,12 @@ class MedicationStatement(Base, TimestampMixin, VersionMixin, UidPk):
     recorded_by_uid: Mapped[str] = mapped_column(
         ForeignKey("person.uid", ondelete="RESTRICT"), nullable=False
     )
+    #: The credential under which this was prescribed or dispensed, and the
+    #: GLN copied from it. Copied rather than joined on purpose: a
+    #: prescription must stay attributable to the licence that was live when it
+    #: was written, even after that credential later lapses or is corrected.
+    recorded_under_credential_uid: Mapped[str | None] = mapped_column(String(32))
+    recorded_by_gln: Mapped[str | None] = mapped_column(String(13))
     organization_uid: Mapped[str | None] = mapped_column(
         ForeignKey("organization.uid", ondelete="RESTRICT")
     )

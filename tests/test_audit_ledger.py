@@ -21,7 +21,7 @@ from ehealth.services.changelog import (
     snapshot,
 )
 from ehealth.services.persons import PersonRegistration
-from ehealth.models.core import PersonKind
+from ehealth.models.core import PersonRoleKind
 
 from tests.conftest import AHVN_DORA
 
@@ -168,7 +168,7 @@ class TestChangeTracking:
         person = container.persons.register(
             db,
             PersonRegistration(
-                kind=PersonKind.PATIENT,
+                roles=[PersonRoleKind.PATIENT],
                 given_name="Dora",
                 family_name="Test",
                 ahvn13=AHVN_DORA,

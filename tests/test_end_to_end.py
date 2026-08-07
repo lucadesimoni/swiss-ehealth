@@ -31,7 +31,7 @@ def registry(client):
     patient = client.post(
         "/persons",
         json={
-            "kind": "patient",
+            "roles": ["patient"],
             "given_name": "Anna",
             "family_name": "Muster",
             "ahvn13": AHVN_ANNA,
@@ -44,21 +44,38 @@ def registry(client):
     doctor = client.post(
         "/persons",
         json={
-            "kind": "healthcare_professional",
+            # Beat is registered as a patient too — one person, two roles.
+            "roles": ["patient"],
             "given_name": "Beat",
             "family_name": "Arzt",
             "ahvn13": AHVN_BEAT,
-            "gln": "7601000000002",
-            "profession": "Allgemeine Innere Medizin",
-            "organization_uid": org_uid,
         },
     )
     assert doctor.status_code == 201, doctor.text
+    credential = client.post(
+        f"/persons/{doctor.json()['uid']}/credentials",
+        json={
+            "gln": "7601000000002",
+            "professional_register": "medreg",
+            "profession": "physician",
+            "specialisation": "Facharzt Allgemeine Innere Medizin",
+            "licence_canton": "ZH",
+            "licence_number": "ZH-2019-04412",
+            "zsr_number": "A123456",
+            "organization_uid": org_uid,
+        },
+    )
+    assert credential.status_code == 201, credential.text
+    verified = client.post(
+        f"/credentials/{credential.json()['uid']}/verify",
+        json={"source": "MedReg", "evidence": {"checked": "e2e"}},
+    )
+    assert verified.status_code == 200, verified.text
 
     visitor = client.post(
         "/persons",
         json={
-            "kind": "visitor",
+            "roles": ["visitor"],
             "given_name": "Carla",
             "family_name": "Besuch",
             "ahvn13": AHVN_CARLA,
@@ -79,7 +96,10 @@ def registry(client):
             "atc_code": "C09AA03",
             "active_ingredient": "Lisinopril",
             "strength": "10 mg",
-            "swissmedic_authorisation": "12345",
+            "swissmedic_authorisation": "62536",
+            "pharmacode": "1234567",
+            "dispensing_category": "B",
+            "sl_listed": True,
         },
     )
     assert product.status_code == 201, product.text
@@ -89,23 +109,44 @@ def registry(client):
         "patient": patient.json(),
         "doctor": doctor.json(),
         "visitor": visitor.json(),
+        "credential": verified.json(),
         "dossier": dossier.json(),
         "product": product.json(),
     }
 
 
 class TestRegistration:
-    def test_the_response_carries_a_sector_id_not_the_ahv_number(self, registry):
+    def test_the_response_carries_an_18_digit_spid_not_the_ahv_number(self, registry):
         patient = registry["patient"]
-        assert patient["uid"].startswith("pat_")
-        assert patient["spid"].startswith("761.")
+        assert patient["uid"].startswith("per_")
+        assert patient["spid"].startswith("761")
+        assert len(patient["spid"]) == 18
         assert AHVN_ANNA not in str(patient)
+        assert AHVN_ANNA.replace(".", "") not in str(patient)
+
+    def test_a_person_can_hold_several_roles(self, client, registry):
+        """The doctor is registered as a patient and holds a credential, so
+        both roles are live on one record."""
+        roles = client.get(f"/persons/{registry['doctor']['uid']}/roles").json()
+        assert {r["role"] for r in roles if r["status"] == "active"} == {
+            "patient",
+            "healthcare_professional",
+        }
+
+    def test_the_credential_carries_swiss_registration(self, registry):
+        credential = registry["credential"]
+        assert credential["gln"] == "7601000000002"
+        assert credential["professional_register"] == "medreg"
+        assert credential["licence_canton"] == "ZH"
+        assert credential["zsr_number"] == "A123456"
+        assert credential["verified_at"] is not None
+        assert credential["may_prescribe"] is True
 
     def test_a_duplicate_registration_is_a_conflict(self, client, registry):
         response = client.post(
             "/persons",
             json={
-                "kind": "patient",
+                "roles": ["patient"],
                 "given_name": "Anna",
                 "family_name": "Muster-Zweitversuch",
                 "ahvn13": AHVN_ANNA,
@@ -118,7 +159,7 @@ class TestRegistration:
         response = client.post(
             "/persons",
             json={
-                "kind": "patient",
+                "roles": ["patient"],
                 "given_name": "Falsch",
                 "family_name": "Nummer",
                 "ahvn13": "756.1234.5678.98",
@@ -141,7 +182,7 @@ class TestRegistration:
         response = client.post(
             "/persons",
             headers={"X-Admin-Key": "nope"},
-            json={"kind": "patient", "given_name": "X", "family_name": "Y"},
+            json={"roles": ["patient"], "given_name": "X", "family_name": "Y"},
         )
         assert response.status_code == 401
 
@@ -503,7 +544,7 @@ class TestTransportHardening:
         response = client.post(
             "/persons",
             json={
-                "kind": "patient",
+                "roles": ["patient"],
                 "given_name": "A",
                 "family_name": "B",
                 "ahvn13": "756.1111.1111.13",

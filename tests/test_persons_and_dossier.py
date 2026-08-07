@@ -7,10 +7,16 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select, text
 
-from ehealth.models.core import IdentificationMethod, PersonKind
+from ehealth.models.core import (
+    IdentificationMethod,
+    MedicalProfession,
+    PersonRoleKind,
+    ProfessionalRegister,
+)
 from ehealth.services.dossier import DossierError
 from ehealth.services.medication import MedicationError, ProductInput
 from ehealth.services.persons import (
+    CredentialRegistration,
     DuplicatePersonError,
     PersonError,
     PersonRegistration,
@@ -21,7 +27,7 @@ from tests.conftest import AHVN_ANNA, AHVN_DORA
 
 def register_patient(container, db, actor, ahvn=AHVN_DORA, **overrides):
     fields = dict(
-        kind=PersonKind.PATIENT,
+        roles=[PersonRoleKind.PATIENT],
         given_name="Dora",
         family_name="Beispiel",
         ahvn13=ahvn,
@@ -31,10 +37,13 @@ def register_patient(container, db, actor, ahvn=AHVN_DORA, **overrides):
 
 
 class TestRegistration:
-    def test_assigns_a_typed_uid_and_sector_id(self, container, db, system_actor):
+    def test_assigns_a_uid_and_an_18_digit_epr_spid(self, container, db, system_actor):
         person = register_patient(container, db, system_actor)
-        assert person.uid.startswith("pat_")
+        assert person.uid.startswith("per_")
         assert person.spid and person.spid.startswith("761")
+        # The EPR-SPID is 18 digits, not the AHVN13's 13. Getting this wrong
+        # is the classic Swiss e-health integration bug.
+        assert len(person.spid) == 18
         assert person.ppid
 
     def test_never_stores_the_ahv_number_in_a_queryable_column(
@@ -59,7 +68,7 @@ class TestRegistration:
 
     def test_view_decrypts_for_an_authorised_caller(self, container, db, system_actor):
         person = register_patient(container, db, system_actor, family_name="Hufschmid")
-        view = container.persons.view(person)
+        view = container.persons.view(db, person)
         assert view.family_name == "Hufschmid"
         assert view.given_name == "Dora"
 
@@ -100,7 +109,9 @@ class TestRegistration:
             container.persons.register(
                 db,
                 PersonRegistration(
-                    kind=PersonKind.PATIENT, given_name="Sans", family_name="Numero"
+                    roles=[PersonRoleKind.PATIENT],
+                    given_name="Sans",
+                    family_name="Numero",
                 ),
                 system_actor,
             )
@@ -111,7 +122,7 @@ class TestRegistration:
         person = container.persons.register(
             db,
             PersonRegistration(
-                kind=PersonKind.PATIENT,
+                roles=[PersonRoleKind.PATIENT],
                 given_name="Jean",
                 family_name="Voyageur",
                 identification_method=IdentificationMethod.PASSPORT,
@@ -119,43 +130,29 @@ class TestRegistration:
             ),
             system_actor,
         )
-        assert person.uid.startswith("pat_")
+        assert person.uid.startswith("per_")
         assert person.ppid is None
         assert person.spid is None
         assert person.identification_method == "passport"
 
-    def test_a_professional_must_belong_to_an_institution(
-        self, container, db, system_actor
-    ):
-        with pytest.raises(PersonError, match="institution"):
-            container.persons.register(
-                db,
-                PersonRegistration(
-                    kind=PersonKind.HEALTHCARE_PROFESSIONAL,
-                    given_name="Frei",
-                    family_name="Schaffend",
-                    ahvn13=AHVN_DORA,
-                ),
-                system_actor,
-            )
-
-    def test_rejects_a_bad_gln(self, container, db, system_actor, world):
+    def test_rejects_a_bad_gln_on_a_credential(self, container, db, system_actor, world):
+        person = register_patient(container, db, system_actor)
         with pytest.raises(PersonError, match="GLN"):
-            container.persons.register(
+            container.persons.register_credential(
                 db,
-                PersonRegistration(
-                    kind=PersonKind.HEALTHCARE_PROFESSIONAL,
-                    given_name="Falsch",
-                    family_name="Nummer",
-                    ahvn13=AHVN_DORA,
-                    gln="7601000000003",
-                    organization_uid=world.organization.uid,
-                ),
+                person,
                 system_actor,
+                CredentialRegistration(
+                    gln="7601000000003",
+                    register=ProfessionalRegister.MEDREG,
+                    profession=MedicalProfession.PHYSICIAN,
+                ),
             )
 
-    def test_visitors_get_a_visitor_prefixed_uid(self, container, db, world):
-        assert world.visitor.uid.startswith("vis_")
+    def test_everyone_gets_the_same_person_prefix(self, container, db, world):
+        """One person, one UID — the role is data, not syntax."""
+        for person in (world.patient, world.doctor, world.visitor):
+            assert person.uid.startswith("per_")
 
 
 class TestDisclosure:
@@ -197,11 +194,17 @@ class TestDossier:
         with pytest.raises(DossierError, match="already has a dossier"):
             container.dossiers.open(db, system_actor, patient=world.patient)
 
-    def test_refuses_a_dossier_for_a_non_patient(
+    def test_refuses_a_dossier_for_someone_without_the_patient_role(
         self, container, db, system_actor, world
     ):
+        """Note the doctor *does* hold the patient role and so is eligible —
+        the check is on the role, not on who the person is."""
+        assert container.persons.has_role(
+            db, world.doctor.uid, PersonRoleKind.PATIENT
+        )
+        visitor_only = world.visitor
         with pytest.raises(DossierError, match="only a patient"):
-            container.dossiers.open(db, system_actor, patient=world.doctor)
+            container.dossiers.open(db, system_actor, patient=visitor_only)
 
 
 class TestMedicationCatalogue:
