@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Request and response models.
 
 Response models never contain an AHV number, and the direct identifiers they
@@ -422,6 +424,9 @@ class AuditEventOut(BaseModel):
     token_jti: str | None
     detail: dict[str, Any]
     entry_hash: str
+    #: Which build wrote the entry, and under which signed payload layout.
+    payload_version: int
+    software_version: str
 
 
 class ChainVerificationOut(BaseModel):

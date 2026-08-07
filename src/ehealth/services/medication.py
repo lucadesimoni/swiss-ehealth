@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """The medication record.
 
 Prescriptions, dispenses, administrations and patient-reported medication are

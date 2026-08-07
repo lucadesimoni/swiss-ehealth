@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Grants, capability tokens, visitor access, revocation and break-glass.
 
 These exercise the database-backed half of authorisation: the part that can

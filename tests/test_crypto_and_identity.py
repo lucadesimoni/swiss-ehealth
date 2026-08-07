@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Key hierarchy, AEAD binding, signatures, and AHVN13 pseudonymisation."""
 
 from __future__ import annotations

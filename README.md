@@ -133,13 +133,36 @@ Clinical data is never deleted: documents are superseded or retracted,
 medication is stopped or marked `entered_in_error`. A later reader has to be
 able to see that a wrong result existed and was withdrawn.
 
+## Versioning
+
+Five things version independently, because they change for different reasons
+and break different consumers: the **software release**, the **HTTP API**, the
+**database schema**, the **signed audit payload layout**, and the **key
+versions**. `src/ehealth/version.py` is the source of truth for the first four;
+`pyproject.toml` and `CHANGELOG.md` are checked against it by the test suite, so
+a release whose numbers have drifted fails instead of shipping.
+
+Every ledger entry and anchor carries the build that wrote it —
+`0.1.0+g1a2b3c4`, inside the signature — so any record traces back to a commit
+years later, and a `.dirty` suffix marks a build that is not reproducible from
+any commit. The signed payload layout is versioned with a builder per version
+that is never edited after release; a build meeting a payload version it does
+not know reports a named failure rather than declaring the entry sound.
+
+Full policy and release procedure in [`docs/versioning.md`](docs/versioning.md);
+history in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Running it
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 250 tests
+make test        # 276 tests
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
+
+make version         # release identity of this checkout
+make verify-version  # version numbers agree across the three files
+make release VERSION=0.2.0
 ```
 
 `make run` uses the in-process mock identity provider and an in-memory mail
@@ -239,4 +262,21 @@ Elektronisches Patientendossier mit maximaler Schweizer Datenhoheit:
 
 ## Licence
 
-GPL-3.0-or-later, per the repository `LICENSE`.
+**AGPL-3.0-or-later.** Every source file carries an SPDX identifier, and the
+test suite fails if one is missing.
+
+The system is a network service, and that decides the licence: AGPL §13 means
+anyone who *operates* a modified version for others must offer them its source.
+Without it, a foreign cloud provider could fork this into a closed hosted EPD
+platform and return nothing — the exact dependency the sovereignty requirement
+exists to prevent.
+
+On jurisdiction: the AGPL carries **no choice-of-law and no venue clause**, so
+between Swiss parties Swiss law applies and Swiss courts hear it. That is why
+the EUPL was rejected despite being the obvious public-sector candidate — its
+Article 15 imports the law of an EU Member State, Belgian law and CJEU
+jurisdiction.
+
+Reasoning in full, including the Swiss-law caveats on liability disclaimers
+(OR Art. 100) and the contribution terms, in
+[`docs/licensing.md`](docs/licensing.md).

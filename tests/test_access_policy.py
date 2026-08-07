@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """The consent decision, as a pure function.
 
 These cases are the actual privacy policy of the system, written out. They run

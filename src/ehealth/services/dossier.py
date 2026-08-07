@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Dossier and document operations.
 
 Reads are audited as carefully as writes. A record system where "who looked at

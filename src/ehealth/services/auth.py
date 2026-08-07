@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Login: SwissID first, emailed one-time code second, then a bound session.
 
 The sequence is deliberate. Proving who you are (SwissID) and proving you

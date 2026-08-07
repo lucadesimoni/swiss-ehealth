@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """OpenID Connect client for SwissID (or any conformant provider).
 
 Implements the authorisation code flow with PKCE and full ID token

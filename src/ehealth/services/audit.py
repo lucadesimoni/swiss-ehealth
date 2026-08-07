@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """The append-only, hash-chained, signed audit ledger.
 
 Every access to and mutation of health data goes through :meth:`AuditLedger.append`.
@@ -40,6 +42,7 @@ from ehealth.security.crypto import (
     hash_chain_link,
     sha256,
 )
+from ehealth.version import AUDIT_PAYLOAD_VERSION, version_label
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,57 @@ class ActorContext:
     @classmethod
     def system(cls, request_id: str | None = None) -> "ActorContext":
         return cls(actor_uid=None, actor_kind="system", request_id=request_id)
+
+
+def _payload_v1(
+    *,
+    seq: int,
+    uid: str,
+    occurred_at: str,
+    actor_uid: str | None,
+    actor_kind: str,
+    on_behalf_of_uid: str | None,
+    actor_organization_uid: str | None,
+    action: str,
+    outcome: str,
+    purpose: str | None,
+    resource_type: str,
+    resource_uid: str | None,
+    dossier_uid: str | None,
+    token_jti: str | None,
+    detail: dict,
+    software_version: str,
+) -> dict:
+    """Version 1 of the signed audit payload."""
+    return {
+        "v": 1,
+        "seq": seq,
+        "uid": uid,
+        "occurred_at": occurred_at,
+        "actor_uid": actor_uid,
+        "actor_kind": actor_kind,
+        "on_behalf_of_uid": on_behalf_of_uid,
+        "actor_organization_uid": actor_organization_uid,
+        "action": action,
+        "outcome": outcome,
+        "purpose": purpose,
+        "resource_type": resource_type,
+        "resource_uid": resource_uid,
+        "dossier_uid": dossier_uid,
+        "token_jti": token_jti,
+        "detail": detail,
+        "software_version": software_version,
+    }
+
+
+#: One builder per payload version, never edited in place.
+#:
+#: This is the whole reason the layout is versioned: changing ``_payload_v1``
+#: after entries exist would change their hashes and make every one of them
+#: fail verification. A new format is a new entry in this table plus a bump of
+#: :data:`~ehealth.version.AUDIT_PAYLOAD_VERSION`; the old builder stays so
+#: old entries keep verifying.
+PAYLOAD_BUILDERS = {1: _payload_v1}
 
 
 def commit_security_event(session: Session) -> None:
@@ -123,23 +177,25 @@ class AuditLedger:
         occurred_at = occurred_at or utcnow()
         uid = new_uid("req")
 
-        payload = {
-            "seq": seq,
-            "uid": uid,
-            "occurred_at": occurred_at.isoformat(),
-            "actor_uid": actor.actor_uid,
-            "actor_kind": actor.actor_kind,
-            "on_behalf_of_uid": actor.on_behalf_of_uid,
-            "actor_organization_uid": actor.organization_uid,
-            "action": action.value,
-            "outcome": outcome.value,
-            "purpose": actor.purpose,
-            "resource_type": resource_type,
-            "resource_uid": resource_uid,
-            "dossier_uid": dossier_uid,
-            "token_jti": actor.token_jti,
-            "detail": detail or {},
-        }
+        software_version = version_label()
+        payload = PAYLOAD_BUILDERS[AUDIT_PAYLOAD_VERSION](
+            seq=seq,
+            uid=uid,
+            occurred_at=occurred_at.isoformat(),
+            actor_uid=actor.actor_uid,
+            actor_kind=actor.actor_kind,
+            on_behalf_of_uid=actor.on_behalf_of_uid,
+            actor_organization_uid=actor.organization_uid,
+            action=action.value,
+            outcome=outcome.value,
+            purpose=actor.purpose,
+            resource_type=resource_type,
+            resource_uid=resource_uid,
+            dossier_uid=dossier_uid,
+            token_jti=actor.token_jti,
+            detail=detail or {},
+            software_version=software_version,
+        )
         payload_hash = sha256(canonical_json(payload))
         entry_hash = hash_chain_link(bytes.fromhex(prev_hash), payload_hash)
         signer = self._signer()
@@ -163,6 +219,8 @@ class AuditLedger:
             client_ip_hash=actor.client_ip_hash,
             user_agent=(actor.user_agent or None) and actor.user_agent[:200],
             detail=payload["detail"],
+            payload_version=AUDIT_PAYLOAD_VERSION,
+            software_version=software_version,
             payload_hash=payload_hash.hex(),
             prev_hash=prev_hash,
             entry_hash=entry_hash.hex(),
@@ -187,24 +245,34 @@ class AuditLedger:
 
     # -- verification -----------------------------------------------------
 
-    def recompute_payload_hash(self, event: AuditEvent) -> str:
-        payload = {
-            "seq": event.seq,
-            "uid": event.uid,
-            "occurred_at": event.occurred_at.isoformat(),
-            "actor_uid": event.actor_uid,
-            "actor_kind": event.actor_kind,
-            "on_behalf_of_uid": event.on_behalf_of_uid,
-            "actor_organization_uid": event.actor_organization_uid,
-            "action": event.action,
-            "outcome": event.outcome,
-            "purpose": event.purpose,
-            "resource_type": event.resource_type,
-            "resource_uid": event.resource_uid,
-            "dossier_uid": event.dossier_uid,
-            "token_jti": event.token_jti,
-            "detail": event.detail or {},
-        }
+    def recompute_payload_hash(self, event: AuditEvent) -> str | None:
+        """Rebuild the signed payload under the entry's own format version.
+
+        Returns ``None`` for a payload version this build does not know how to
+        rebuild — verification then fails closed rather than reporting an
+        entry as sound that it cannot actually check.
+        """
+        builder = PAYLOAD_BUILDERS.get(event.payload_version)
+        if builder is None:
+            return None
+        payload = builder(
+            seq=event.seq,
+            uid=event.uid,
+            occurred_at=event.occurred_at.isoformat(),
+            actor_uid=event.actor_uid,
+            actor_kind=event.actor_kind,
+            on_behalf_of_uid=event.on_behalf_of_uid,
+            actor_organization_uid=event.actor_organization_uid,
+            action=event.action,
+            outcome=event.outcome,
+            purpose=event.purpose,
+            resource_type=event.resource_type,
+            resource_uid=event.resource_uid,
+            dossier_uid=event.dossier_uid,
+            token_jti=event.token_jti,
+            detail=event.detail or {},
+            software_version=event.software_version,
+        )
         return sha256(canonical_json(payload)).hex()
 
     def verify_chain(
@@ -251,7 +319,18 @@ class AuditLedger:
                     first_bad_seq=event.seq,
                     reason="broken link: prev_hash does not match predecessor",
                 )
-            if self.recompute_payload_hash(event) != event.payload_hash:
+            recomputed_payload = self.recompute_payload_hash(event)
+            if recomputed_payload is None:
+                return ChainVerification(
+                    ok=False,
+                    checked=index,
+                    first_bad_seq=event.seq,
+                    reason=(
+                        f"payload version {event.payload_version} is unknown to "
+                        f"this build; verify with a build that supports it"
+                    ),
+                )
+            if recomputed_payload != event.payload_hash:
                 return ChainVerification(
                     ok=False,
                     checked=index,
@@ -331,6 +410,7 @@ class AuditLedger:
         ).scalar_one()
 
         signer = self._signer()
+        software_version = version_label()
         body = canonical_json(
             {
                 "period": period,
@@ -338,6 +418,7 @@ class AuditLedger:
                 "last_seq": tail.seq,
                 "head_hash": tail.entry_hash,
                 "event_count": count,
+                "software_version": software_version,
             }
         )
         anchor = LedgerAnchor(
@@ -350,6 +431,7 @@ class AuditLedger:
             signature=signer.sign(sha256(body)),
             key_id=signer.kid,
             algorithm=signer.algorithm,
+            software_version=software_version,
             created_at=utcnow(),
         )
         session.add(anchor)

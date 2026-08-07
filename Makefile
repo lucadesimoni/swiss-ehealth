@@ -1,4 +1,5 @@
-.PHONY: install test test-verbose run seed keygen clean lint
+# SPDX-License-Identifier: AGPL-3.0-or-later
+.PHONY: install test test-verbose run seed keygen clean version verify-version release
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -25,5 +26,34 @@ seed:
 keygen:
 	@$(PY) -c "from ehealth.config import generate_root_key; print(generate_root_key())"
 
+## Print the release identity of this checkout, exactly as /version reports it.
+version:
+	@$(PY) -c "import json; from ehealth.version import release_identity; \
+	print(json.dumps(release_identity().as_dict(), indent=2))"
+
+## Version numbers agree across version.py, pyproject.toml and CHANGELOG.md.
+verify-version:
+	@$(PY) -m pytest tests/test_versioning.py -q
+
+## Cut a release: make release VERSION=0.2.0
+##
+## Refuses on a dirty tree, a version mismatch, a missing CHANGELOG section or
+## an existing tag — a tag, once pushed, is a claim that must stay true.
+release: verify-version
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { \
+	  echo "refusing to release from a dirty working tree"; exit 1; }
+	@actual=$$($(PY) -c "from ehealth.version import __version__; print(__version__)"); \
+	  test "$$actual" = "$(VERSION)" || { \
+	  echo "version.py says $$actual, you asked for $(VERSION)"; exit 1; }
+	@grep -q "^## \[$(VERSION)\]" CHANGELOG.md || { \
+	  echo "CHANGELOG.md has no section for $(VERSION)"; exit 1; }
+	@! git rev-parse "v$(VERSION)" >/dev/null 2>&1 || { \
+	  echo "tag v$(VERSION) already exists; tags are never moved"; exit 1; }
+	$(PY) -m pytest -q
+	git tag -a "v$(VERSION)" -m "swiss-ehealth $(VERSION)"
+	@echo "tagged v$(VERSION) — push with: git push origin main --follow-tags"
+
 clean:
-	rm -rf .pytest_cache **/__pycache__ ehealth.db ehealth.db-wal ehealth.db-shm
+	rm -rf .pytest_cache **/__pycache__ ehealth.db ehealth.db-wal ehealth.db-shm \
+	       ehealth-demo.db ehealth-demo.db-wal ehealth-demo.db-shm

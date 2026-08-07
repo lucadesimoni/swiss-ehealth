@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Accounts, OIDC flows, login sessions and second-factor challenges."""
 
 from __future__ import annotations

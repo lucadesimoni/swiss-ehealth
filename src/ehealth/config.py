@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Deployment configuration.
 
 Defaults are the *safe* values, so an operator has to opt in to anything

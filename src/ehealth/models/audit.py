@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Tamper-evident audit ledger and per-record change history.
 
 Two complementary structures:
@@ -126,6 +128,15 @@ class AuditEvent(Base, UidPk):
     #: identifiers; the trail itself is not a second copy of the record.
     detail: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
 
+    #: Layout of the signed payload. Verification picks its builder by this
+    #: number, so an entry written under an older format stays verifiable
+    #: forever instead of silently failing once the format moves on.
+    payload_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Which build wrote this entry, e.g. ``0.1.0+g1a2b3c4``. Signed along
+    #: with everything else, so "which code version produced this record" is
+    #: answerable years later and cannot be edited after the fact.
+    software_version: Mapped[str] = mapped_column(String(40), nullable=False)
+
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -154,6 +165,9 @@ class LedgerAnchor(Base, UidPk):
     signature: Mapped[str] = mapped_column(String(128), nullable=False)
     key_id: Mapped[str] = mapped_column(String(48), nullable=False)
     algorithm: Mapped[str] = mapped_column(String(24), nullable=False)
+    #: Build that sealed the period, so an anchor published externally can be
+    #: tied to the exact code that produced it.
+    software_version: Mapped[str] = mapped_column(String(40), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     #: Reference to an external timestamp authority or notarisation, if used.
     external_reference: Mapped[str | None] = mapped_column(String(300))

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """One full journey over HTTP, the way a real deployment would be driven.
 
 Enrolment → patient login → consent → grant to a doctor → the doctor writes a

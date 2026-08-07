@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Build a demo dataset that walks the whole system.
 
 Run with ``make seed``. It registers an institution, three people, opens a

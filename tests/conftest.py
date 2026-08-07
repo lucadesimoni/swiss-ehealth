@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Shared fixtures.
 
 Each test gets its own file-backed SQLite database and its own keyring, so

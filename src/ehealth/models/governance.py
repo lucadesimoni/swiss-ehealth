@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Consent, access grants and issued tokens.
 
 Consent is the patient's standing policy; a grant is a concrete, bounded

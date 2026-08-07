@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Audit trail, record history and ledger integrity.
 
 This is the patient's window onto who touched their record (EPDV art. 17) and
@@ -17,7 +19,10 @@ from ehealth.api.routes_auth import AdminKeyDep
 from ehealth.api.schemas import AuditEventOut, ChainVerificationOut, RevisionOut
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditEvent
+from ehealth.security.crypto import SIGNATURE_ALGORITHMS
 from ehealth.security.tokens import Scope
+from ehealth.services.audit import PAYLOAD_BUILDERS
+from ehealth.version import release_identity
 
 router = APIRouter(tags=["audit"])
 
@@ -39,6 +44,8 @@ def _event_out(event: AuditEvent) -> AuditEventOut:
         token_jti=event.token_jti,
         detail=event.detail,
         entry_hash=event.entry_hash,
+        payload_version=event.payload_version,
+        software_version=event.software_version,
     )
 
 
@@ -115,6 +122,32 @@ def anchor_ledger(
         "signature": anchor.signature,
         "key_id": anchor.key_id,
         "algorithm": anchor.algorithm,
+        "software_version": anchor.software_version,
+    }
+
+
+@router.get("/version", tags=["operations"], dependencies=[AdminKeyDep])
+def software_version(container: ContainerDep):
+    """What exactly is running here.
+
+    Behind the admin key rather than public: build provenance is what an
+    auditor needs and what an attacker uses to pick a known vulnerability, and
+    the people entitled to the first already hold the key.
+
+    ``revision`` matches a git commit, ``label`` matches the
+    ``software_version`` stamped on every ledger entry, so a record can be
+    traced to the code that wrote it.
+    """
+    identity = release_identity()
+    return {
+        **identity.as_dict(),
+        "signature_algorithms": {
+            name: {"issuing": algorithm.issuing, "available": algorithm.available}
+            for name, algorithm in SIGNATURE_ALGORITHMS.items()
+        },
+        "audit_payload_versions_supported": sorted(PAYLOAD_BUILDERS),
+        "data_region": container.settings.data_region.value,
+        "environment": container.settings.environment.value,
     }
 
 
