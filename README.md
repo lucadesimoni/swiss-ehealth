@@ -304,7 +304,8 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 437 tests
+make test        # 439 tests on SQLite
+make lint        # ruff check + format check, the same gate CI runs
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
 
@@ -316,7 +317,15 @@ make record-release  # append the release commit to RELEASES.json
 
 make migrate         # bring the database to the latest migration
 make migration name="add allergy table"
+
+# The same suite against the engine production actually uses:
+make test-postgres PGURL=postgresql+psycopg://ehealth:pw@localhost:5432/ehealth
 ```
+
+CI runs all of it on every push: lint, the suite on SQLite, the suite on
+PostgreSQL 16 plus a bare `alembic upgrade head` twice over, and a Docker
+build that is then started to check it runs as uid 10001 and reports the
+revision the pipeline stamped into it.
 
 Schema changes go through Alembic, and the application **refuses to start**
 against a schema it does not expect — in both directions. A database newer than

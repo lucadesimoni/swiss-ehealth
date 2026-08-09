@@ -112,9 +112,13 @@ def main() -> int:
         print(f"  professional {doctor.uid}")
         print(f"    EPR-SPID   {format_spid(doctor.spid)}")
         print(f"    GLN        {credential.gln}  MedReg, {credential.specialisation}")
-        print(f"    licence    {credential.licence_canton} "
-              f"{credential.licence_number}, verified {credential.verified_at:%Y-%m-%d}")
-        print(f"    roles      {', '.join(sorted(r.role for r in container.persons.roles(db, doctor.uid)))}")
+        print(
+            f"    licence    {credential.licence_canton} "
+            f"{credential.licence_number}, verified {credential.verified_at:%Y-%m-%d}"
+        )
+        print(
+            f"    roles      {', '.join(sorted(r.role for r in container.persons.roles(db, doctor.uid)))}"
+        )
         print(f"  visitor      {visitor.uid}")
         print(f"\n  the AHV number {ANNA} is now stored nowhere:")
         print(f"    ppid   {patient.ppid}")
@@ -157,8 +161,10 @@ def main() -> int:
         capability = container.access.mint(db, actor, grant=grant)
         db.commit()
         print(f"  grant     {grant.uid}  level={grant.access_level}")
-        print(f"  token     expires {capability.expires_at:%H:%M:%S}, "
-              f"scopes {', '.join(capability.scopes)}")
+        print(
+            f"  token     expires {capability.expires_at:%H:%M:%S}, "
+            f"scopes {', '.join(capability.scopes)}"
+        )
         print(f"  {capability.token[:72]}…")
 
         access = container.access.authorize(
@@ -190,8 +196,12 @@ def main() -> int:
             StatementInput(
                 kind=MedicationEventKind.PRESCRIPTION,
                 product_uid=product.uid,
-                dosage={"amount": 1, "unit": "Tablette", "frequency": "1-0-0-0",
-                        "route": "oral"},
+                dosage={
+                    "amount": 1,
+                    "unit": "Tablette",
+                    "frequency": "1-0-0-0",
+                    "route": "oral",
+                },
                 reason="Arterielle Hypertonie",
             ),
             recorded_by_uid=doctor.uid,
@@ -218,7 +228,7 @@ def main() -> int:
                 title="Konsultationsbericht",
                 document_class="clinical-note",
                 mime_type="text/plain",
-                content="Blutdruck 150/95 mmHg. Therapie begonnen.".encode(),
+                content=b"Blutdruck 150/95 mmHg. Therapie begonnen.",
             ),
         )
         db.commit()
@@ -231,7 +241,9 @@ def main() -> int:
                 if row.product_uid
                 else row.product_text
             )
-            print(f"    {row.kind:<14} {product_name}  {row.dosage.get('frequency', '')}")
+            print(
+                f"    {row.kind:<14} {product_name}  {row.dosage.get('frequency', '')}"
+            )
 
         rule("5. Visitor access")
         visitor_grant = container.access.issue_grant(
@@ -249,17 +261,23 @@ def main() -> int:
         )
         visitor_token = container.access.mint(db, actor, grant=visitor_grant)
         db.commit()
-        print(f"  granted scopes {', '.join(visitor_grant.scopes)}"
-              "  (document:write was asked for and dropped)")
-        print(f"  valid until {visitor_grant.valid_until:%H:%M:%S}, "
-              f"max {visitor_grant.max_uses} uses")
+        print(
+            f"  granted scopes {', '.join(visitor_grant.scopes)}"
+            "  (document:write was asked for and dropped)"
+        )
+        print(
+            f"  valid until {visitor_grant.valid_until:%H:%M:%S}, "
+            f"max {visitor_grant.max_uses} uses"
+        )
 
         visitor_access = container.access.authorize(
             db, visitor_token.token, required_scope=Scope.MEDICATION_READ
         )
         visible = container.medications.list_for_dossier(db, visitor_access)
-        print(f"  visitor sees {len(visible)} medication entries at level "
-              f"{visitor_access.max_level.value}")
+        print(
+            f"  visitor sees {len(visible)} medication entries at level "
+            f"{visitor_access.max_level.value}"
+        )
 
         rule("6. Revocation")
         container.access.revoke_grant(
@@ -282,13 +300,13 @@ def main() -> int:
 
         from ehealth.models.audit import AuditEvent
 
-        events = db.execute(
-            select(AuditEvent).order_by(AuditEvent.seq)
-        ).scalars().all()
+        events = db.execute(select(AuditEvent).order_by(AuditEvent.seq)).scalars().all()
         for event in events:
             actor_label = event.actor_uid or "system"
-            print(f"  {event.seq:>3}  {event.occurred_at:%H:%M:%S}  "
-                  f"{event.action:<24} {event.outcome:<8} {actor_label}")
+            print(
+                f"  {event.seq:>3}  {event.occurred_at:%H:%M:%S}  "
+                f"{event.action:<24} {event.outcome:<8} {actor_label}"
+            )
 
         rule("8. Ledger integrity")
         # One chain per dossier, so a patient can verify their own record
@@ -296,15 +314,19 @@ def main() -> int:
         own = container.ledger.verify_chain(db, dossier.uid)
         print(f"  dossier chain {dossier.uid}: {own.ok} ({own.checked} entries)")
         whole = container.ledger.verify_all(db)
-        print(f"  every chain verified: {whole.ok} "
-              f"({whole.chains_checked} chains, {whole.events_checked} entries)")
+        print(
+            f"  every chain verified: {whole.ok} "
+            f"({whole.chains_checked} chains, {whole.events_checked} entries)"
+        )
 
         anchor = container.ledger.anchor(db, "demo")
         db.commit()
         print(f"  anchor merkle root {anchor.merkle_root}")
         print(f"  anchor hash        {anchor.anchor_hash}   <- publish this")
-        print(f"  covers             {anchor.chain_count} chains, "
-              f"{anchor.event_count} entries")
+        print(
+            f"  covers             {anchor.chain_count} chains, "
+            f"{anchor.event_count} entries"
+        )
         print(f"  re-verified        {container.ledger.verify_anchor(db, anchor)}")
 
         rule("9. Offline")
@@ -318,9 +340,11 @@ def main() -> int:
         print(f"  emergency dataset  {len(bundle)} bytes (QR-sized)")
         print(f"  verifies offline   {verified.kind}, current={verified.is_current}")
         print(f"  public key         {container.offline.public_key()}")
-        print("  contains:", ", ".join(
-            m["name"] for m in verified.payload["medications"]
-        ) or "(no current medication)")
+        print(
+            "  contains:",
+            ", ".join(m["name"] for m in verified.payload["medications"])
+            or "(no current medication)",
+        )
         result = whole
 
         print("\nDemo database written to ./ehealth-demo.db\n")

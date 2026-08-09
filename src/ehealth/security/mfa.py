@@ -131,7 +131,7 @@ class OtpService:
     def generate(self, challenge_uid: str) -> OtpMaterial:
         # secrets.randbelow gives a uniform value; zero-padding keeps every
         # code the same length so "0" is not a weaker leading digit.
-        code = f"{secrets.randbelow(10 ** self._length):0{self._length}d}"
+        code = f"{secrets.randbelow(10**self._length):0{self._length}d}"
         return OtpMaterial(
             code=code,
             code_hash=self.hash_code(challenge_uid, code),
@@ -140,7 +140,7 @@ class OtpService:
 
     def hash_code(self, challenge_uid: str, code: str) -> str:
         digest = self._keyring.mac(
-            KeyPurpose.OTP_BINDING, f"{challenge_uid}|{code}".encode("utf-8")
+            KeyPurpose.OTP_BINDING, f"{challenge_uid}|{code}".encode()
         )
         return b64u(digest)
 

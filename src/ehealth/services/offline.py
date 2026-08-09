@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from ehealth.db import utcnow
 from ehealth.domain.uid import format_spid
+from ehealth.models.audit import AuditAction
 from ehealth.models.base import Confidentiality
 from ehealth.models.clinical import (
     Dossier,
@@ -55,7 +56,6 @@ from ehealth.security.crypto import (
     sha256,
 )
 from ehealth.services.audit import ActorContext, AuditLedger, chain_for
-from ehealth.models.audit import AuditAction
 from ehealth.version import version_label
 
 #: Bundle format version. Like the audit payload, a bundle already in a
@@ -249,8 +249,7 @@ class OfflineBundleService:
                     MedicationStatement.dossier_uid == dossier.uid,
                     MedicationStatement.status == MedicationStatus.ACTIVE.value,
                     # Emergency data never carries what the patient hid.
-                    MedicationStatement.confidentiality
-                    == Confidentiality.NORMAL.value,
+                    MedicationStatement.confidentiality == Confidentiality.NORMAL.value,
                 )
                 .order_by(MedicationStatement.effective_start.desc())
             )
@@ -309,7 +308,9 @@ class OfflineBundleService:
         body = canonical_json(payload)
         signer = self._signer()
         header = b64u(
-            canonical_json({"alg": signer.algorithm, "kid": signer.kid, "typ": "BUNDLE"})
+            canonical_json(
+                {"alg": signer.algorithm, "kid": signer.kid, "typ": "BUNDLE"}
+            )
         )
         return f"{header}.{b64u(body)}.{signer.sign(sha256(body))}"
 
@@ -352,7 +353,7 @@ def verify_bundle(bundle: str, public_key_b64: str) -> VerifiedBundle:
         header = json.loads(b64u_decode(header_b64))
         body_bytes = b64u_decode(body_b64)
         signature = b64u_decode(signature_b64)
-    except Exception as exc:  # noqa: BLE001 - normalise to our error type
+    except Exception as exc:
         raise BundleVerificationError("bundle is malformed") from exc
 
     if header.get("typ") != "BUNDLE":
@@ -391,7 +392,9 @@ def verify_bundle(bundle: str, public_key_b64: str) -> VerifiedBundle:
         issued_at = datetime.fromisoformat(payload["issued_at"])
         expires_at = datetime.fromisoformat(payload["expires_at"])
     except (KeyError, ValueError) as exc:
-        raise BundleVerificationError("bundle timestamps are missing or malformed") from exc
+        raise BundleVerificationError(
+            "bundle timestamps are missing or malformed"
+        ) from exc
     if issued_at.tzinfo is None:
         issued_at = issued_at.replace(tzinfo=UTC)
     if expires_at.tzinfo is None:

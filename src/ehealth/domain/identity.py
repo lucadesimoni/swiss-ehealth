@@ -169,4 +169,4 @@ class IdentityService:
 
     @staticmethod
     def _field_aad(entity_uid: str, field: str) -> bytes:
-        return f"field|{entity_uid}|{field}".encode("utf-8")
+        return f"field|{entity_uid}|{field}".encode()

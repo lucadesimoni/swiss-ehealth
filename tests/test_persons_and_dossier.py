@@ -21,7 +21,6 @@ from ehealth.services.persons import (
     PersonError,
     PersonRegistration,
 )
-
 from tests.conftest import AHVN_ANNA, AHVN_DORA
 
 
@@ -84,9 +83,7 @@ class TestRegistration:
         assert found is not None
         assert found.uid == world.patient.uid
 
-    def test_finds_a_person_by_sector_id_in_either_format(
-        self, container, db, world
-    ):
+    def test_finds_a_person_by_sector_id_in_either_format(self, container, db, world):
         from ehealth.domain.uid import format_spid
 
         spid = world.patient.spid
@@ -135,7 +132,9 @@ class TestRegistration:
         assert person.spid is None
         assert person.identification_method == "passport"
 
-    def test_rejects_a_bad_gln_on_a_credential(self, container, db, system_actor, world):
+    def test_rejects_a_bad_gln_on_a_credential(
+        self, container, db, system_actor, world
+    ):
         person = register_patient(container, db, system_actor)
         with pytest.raises(PersonError, match="GLN"):
             container.persons.register_credential(
@@ -171,9 +170,13 @@ class TestDisclosure:
             db, world.patient, system_actor, legal_basis="court order 2026/42"
         )
         assert revealed == AHVN_ANNA
-        event = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "person.ahvn_unsealed")
-        ).scalars().one()
+        event = (
+            db.execute(
+                select(AuditEvent).where(AuditEvent.action == "person.ahvn_unsealed")
+            )
+            .scalars()
+            .one()
+        )
         assert event.detail["legal_basis"] == "court order 2026/42"
         assert AHVN_ANNA not in str(event.detail)
 
@@ -199,9 +202,7 @@ class TestDossier:
     ):
         """Note the doctor *does* hold the patient role and so is eligible —
         the check is on the role, not on who the person is."""
-        assert container.persons.has_role(
-            db, world.doctor.uid, PersonRoleKind.PATIENT
-        )
+        assert container.persons.has_role(db, world.doctor.uid, PersonRoleKind.PATIENT)
         visitor_only = world.visitor
         with pytest.raises(DossierError, match="only a patient"):
             container.dossiers.open(db, system_actor, patient=visitor_only)

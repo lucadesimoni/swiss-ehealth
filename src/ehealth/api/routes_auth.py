@@ -41,9 +41,7 @@ def require_admin_key(
     """
     configured = container.settings.admin_api_key
     if not configured:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     if not x_admin_key or not constant_time_equals(x_admin_key, configured):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated"
@@ -122,9 +120,7 @@ def resend_otp(
 ):
     """Send a fresh code and invalidate the previous one."""
     try:
-        challenge = container.auth.resend_otp(
-            db, base, session_uid=payload.session_uid
-        )
+        challenge = container.auth.resend_otp(db, base, session_uid=payload.session_uid)
     except AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication failed"

@@ -159,9 +159,11 @@ class PersonService:
 
         if ahvn is not None:
             derived = self._identity.derive(ahvn)
-            existing = session.execute(
-                select(Person).where(Person.ppid == derived.ppid)
-            ).scalars().first()
+            existing = (
+                session.execute(select(Person).where(Person.ppid == derived.ppid))
+                .scalars()
+                .first()
+            )
             if existing is not None:
                 raise DuplicatePersonError(existing.uid)
             person.ppid = derived.ppid
@@ -213,9 +215,11 @@ class PersonService:
         an identifier is not a failure mode worth risking.
         """
         for candidate in self._identity.spid_candidates(ahvn):
-            taken = session.execute(
-                select(Person.uid).where(Person.spid == candidate)
-            ).scalars().first()
+            taken = (
+                session.execute(select(Person.uid).where(Person.spid == candidate))
+                .scalars()
+                .first()
+            )
             if taken is None:
                 return candidate
         raise PersonError(
@@ -494,9 +498,7 @@ class PersonService:
         return credential
 
     @staticmethod
-    def credentials(
-        session: Session, person_uid: str
-    ) -> list[ProfessionalCredential]:
+    def credentials(session: Session, person_uid: str) -> list[ProfessionalCredential]:
         return list(
             session.execute(
                 select(ProfessionalCredential).where(
@@ -515,14 +517,14 @@ class PersonService:
         an unverified one.
         """
         on = on or utcnow().date()
-        live = [c for c in self.credentials(session, person_uid) if c.licence_is_live(on)]
+        live = [
+            c for c in self.credentials(session, person_uid) if c.licence_is_live(on)
+        ]
         if not live:
             return None
         return sorted(live, key=lambda c: (c.is_verified, c.uid), reverse=True)[0]
 
-    def find_by_gln(
-        self, session: Session, gln: str
-    ) -> ProfessionalCredential | None:
+    def find_by_gln(self, session: Session, gln: str) -> ProfessionalCredential | None:
         return (
             session.execute(
                 select(ProfessionalCredential).where(ProfessionalCredential.gln == gln)
@@ -677,9 +679,13 @@ class OrganizationService:
                 digits = CheUid.parse(che_uid).digits
             except IdentifierError as exc:
                 raise PersonError(str(exc)) from exc
-            duplicate = session.execute(
-                select(Organization).where(Organization.che_uid == digits)
-            ).scalars().first()
+            duplicate = (
+                session.execute(
+                    select(Organization).where(Organization.che_uid == digits)
+                )
+                .scalars()
+                .first()
+            )
             if duplicate is not None:
                 raise PersonError("an institution with this CHE UID already exists")
         if gln and not is_valid_gln(gln):

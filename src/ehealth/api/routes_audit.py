@@ -75,9 +75,7 @@ def own_audit_trail(
     stmt = select(AuditEvent).where(AuditEvent.dossier_uid == dossier.uid)
     if since is not None:
         stmt = stmt.where(AuditEvent.occurred_at >= since)
-    events = db.execute(
-        stmt.order_by(AuditEvent.seq.desc()).limit(limit)
-    ).scalars()
+    events = db.execute(stmt.order_by(AuditEvent.seq.desc()).limit(limit)).scalars()
     return [_event_out(event) for event in events]
 
 
@@ -111,7 +109,9 @@ def verify_chain(
 
 
 @router.get(
-    "/audit/verify-all", response_model=LedgerVerificationOut, dependencies=[AdminKeyDep]
+    "/audit/verify-all",
+    response_model=LedgerVerificationOut,
+    dependencies=[AdminKeyDep],
 )
 def verify_all(
     db: DbDep,

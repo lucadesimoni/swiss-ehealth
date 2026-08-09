@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What this pipeline exists to prevent: claims in the README that nobody has
+# checked. Before it, "runs on PostgreSQL" and "the image builds" were both
+# true only as far as anyone had bothered to try. Each job below turns one of
+# those into something that fails loudly when it stops being true.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONPATH: src
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check
+
+  test-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The release ledger verifies entries against the commits they name,
+          # which a shallow clone cannot resolve. Without this the checks skip
+          # themselves and the job passes without having verified anything.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ehealth
+          POSTGRES_PASSWORD: ehealth
+          POSTGRES_DB: ehealth
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ehealth -d ehealth"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      EHEALTH_TEST_DATABASE_URL: postgresql+psycopg://ehealth:ehealth@localhost:5432/ehealth
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev,postgres]"
+
+      # The whole suite against the engine production actually uses. SQLite
+      # cannot see a JSONB mismatch, a reserved word, or a stricter
+      # transactional rule; this is where those surface.
+      - name: Test suite on PostgreSQL
+        run: pytest -q
+
+      # A separate, plain `alembic upgrade head` — not through pytest — because
+      # that is the command an operator runs, and it has its own failure modes
+      # (config parsing, the advisory lock, the URL coming from settings).
+      - name: Migrate a real database from empty
+        env:
+          EHEALTH_DATABASE_URL: postgresql+psycopg://ehealth:ehealth@localhost:5432/ehealth
+        run: |
+          alembic upgrade head
+          alembic current
+          # Idempotent: running it twice must be a no-op, which is what every
+          # redeploy does.
+          alembic upgrade head
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: swiss-ehealth:ci
+          build-args: |
+            GIT_REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Building proves it compiles. This proves the thing inside it runs, and
+      # that the provenance the pipeline stamped actually reached the image —
+      # every audit entry it writes will carry that revision.
+      - name: The image runs and reports its build
+        run: |
+          docker run --rm --entrypoint python swiss-ehealth:ci -c "
+          from ehealth.version import release_identity
+          identity = release_identity()
+          print(identity.as_dict())
+          assert identity.revision.startswith('${{ github.sha }}'[:7]), identity.revision
+          "
+
+      - name: It runs as a non-root user
+        run: |
+          test "$(docker run --rm --entrypoint id swiss-ehealth:ci -u)" = "10001"

@@ -73,7 +73,7 @@ def b64u_decode(raw: str) -> bytes:
     padding = "=" * (-len(raw) % 4)
     try:
         return base64.urlsafe_b64decode(raw + padding)
-    except Exception as exc:  # noqa: BLE001 - normalise to our error type
+    except Exception as exc:
         raise CryptoError("invalid base64url input") from exc
 
 
@@ -171,11 +171,11 @@ class KeyRing:
     @classmethod
     def from_base64(
         cls, encoded: str, current_versions: dict[KeyPurpose, int] | None = None
-    ) -> "KeyRing":
+    ) -> KeyRing:
         return cls(b64u_decode(encoded), current_versions)
 
     @classmethod
-    def generate(cls) -> "KeyRing":
+    def generate(cls) -> KeyRing:
         """Ephemeral keyring — development and tests only."""
         return cls(os.urandom(ROOT_KEY_BYTES))
 
@@ -193,7 +193,7 @@ class KeyRing:
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
-            info=f"ch.ehealth.{purpose.value}.v{version}".encode("utf-8"),
+            info=f"ch.ehealth.{purpose.value}.v{version}".encode(),
         ).derive(self._root)
         derived = DerivedKey(purpose, version, material)
         self._cache[(purpose, version)] = derived
@@ -204,7 +204,9 @@ class KeyRing:
     def mac(
         self, purpose: KeyPurpose, data: bytes, version: int | None = None
     ) -> bytes:
-        return hmac.new(self.key(purpose, version).material, data, hashlib.sha256).digest()
+        return hmac.new(
+            self.key(purpose, version).material, data, hashlib.sha256
+        ).digest()
 
     def blind_index(
         self, purpose: KeyPurpose, data: bytes, version: int | None = None
@@ -219,9 +221,7 @@ class KeyRing:
 
     # -- envelope encryption ----------------------------------------------
 
-    def encrypt(
-        self, purpose: KeyPurpose, plaintext: bytes, *, aad: bytes
-    ) -> str:
+    def encrypt(self, purpose: KeyPurpose, plaintext: bytes, *, aad: bytes) -> str:
         key = self.key(purpose)
         nonce = os.urandom(_NONCE_BYTES)
         ciphertext = AESGCM(key.material).encrypt(nonce, plaintext, aad)
@@ -251,12 +251,12 @@ class KeyRing:
             return AESGCM(key.material).decrypt(
                 b64u_decode(nonce_b64), b64u_decode(ct_b64), aad
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise CryptoError("ciphertext failed authentication") from exc
 
     # -- signing ----------------------------------------------------------
 
-    def signer(self, purpose: KeyPurpose, version: int | None = None) -> "Signer":
+    def signer(self, purpose: KeyPurpose, version: int | None = None) -> Signer:
         """Deterministically derive the Ed25519 keypair for a purpose.
 
         Deriving rather than storing means a restored backup of the root key
@@ -287,9 +287,7 @@ class Signer:
             PublicFormat,
         )
 
-        return b64u(
-            self._public.public_bytes(Encoding.Raw, PublicFormat.Raw)
-        )
+        return b64u(self._public.public_bytes(Encoding.Raw, PublicFormat.Raw))
 
     def sign(self, message: bytes) -> str:
         return b64u(self._private.sign(message))

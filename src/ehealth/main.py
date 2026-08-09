@@ -93,6 +93,7 @@ def problem(
         headers=headers,
     )
 
+
 #: Sent on every response. ``default-src 'none'`` because this service returns
 #: JSON — it has no reason to be able to load anything at all.
 SECURITY_HEADERS = {
@@ -134,7 +135,10 @@ def create_app(
         )
         logger.info(
             "started",
-            extra={"environment": settings.environment.value, "region": settings.data_region.value},
+            extra={
+                "environment": settings.environment.value,
+                "region": settings.data_region.value,
+            },
         )
         yield
 

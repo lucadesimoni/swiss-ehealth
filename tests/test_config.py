@@ -91,7 +91,10 @@ class TestDefaults:
         assert len(b64u_decode(key)) == 32
         assert (
             settings.keyring().key(KeyPurpose.FIELD_ENCRYPTION).material
-            == Settings(root_key=key).keyring().key(KeyPurpose.FIELD_ENCRYPTION).material
+            == Settings(root_key=key)
+            .keyring()
+            .key(KeyPurpose.FIELD_ENCRYPTION)
+            .material
         )
 
     def test_key_versions_flow_into_the_keyring(self):

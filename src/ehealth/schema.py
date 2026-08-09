@@ -21,9 +21,10 @@ Both are one-line fixes when caught at boot and expensive when caught later.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
-from sqlalchemy import Engine, Integer, String, Table, inspect, select
+from sqlalchemy import Engine, Integer, String, Table, inspect, select, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ehealth.db import Base, utcnow
@@ -33,6 +34,82 @@ from ehealth.version import SCHEMA_VERSION
 
 class SchemaMismatch(RuntimeError):
     """The database is not the shape this build expects."""
+
+
+class ConcurrentMigration(RuntimeError):
+    """Another migration already holds the lock on this database."""
+
+
+#: Advisory lock identifier for migrations. Arbitrary but fixed forever:
+#: changing it would let an old and a new deployer each believe they hold the
+#: only lock, which is the exact failure the lock exists to prevent.
+MIGRATION_LOCK_KEY = 0x45485F4D_49475254
+
+#: How long a migration waits for a table lock before giving up.
+#:
+#: This is the setting that separates a slow deploy from an outage. An
+#: ``ALTER TABLE`` blocks behind any open transaction touching the table — and
+#: while it waits, every *later* query on that table queues behind it, because
+#: PostgreSQL grants lock requests in order. A long-running report can
+#: therefore stall the whole table through a migration that would have taken a
+#: millisecond. Giving up after a few seconds turns that into a retryable
+#: deploy instead of an incident.
+LOCK_TIMEOUT_ENV_VAR = "EHEALTH_MIGRATION_LOCK_TIMEOUT"
+DEFAULT_LOCK_TIMEOUT = "5s"
+
+#: Ceiling on any single migration statement. Zero means no limit, which is
+#: the default: a legitimate index build on a national-scale table can run for
+#: hours and must not be killed halfway through.
+STATEMENT_TIMEOUT_ENV_VAR = "EHEALTH_MIGRATION_STATEMENT_TIMEOUT"
+DEFAULT_STATEMENT_TIMEOUT = "0"
+
+
+def guard_migration(connection) -> None:
+    """Take the migration lock and bound how long locks are waited for.
+
+    A no-op on anything but PostgreSQL — SQLite has a single writer anyway, so
+    there is no second migrator to exclude.
+
+    Two deployers migrating simultaneously is not hypothetical: it is what a
+    retried pipeline, or a rolling deploy across two regions, does by default.
+    Without the lock both proceed, and the loser fails somewhere in the middle
+    with no transaction left to roll back whatever ran non-transactionally.
+
+    ``pg_try_advisory_lock`` returns rather than blocks, so the second deployer
+    reports the collision immediately instead of hanging until someone thinks
+    to look for it.
+    """
+    if connection.dialect.name != "postgresql":
+        return
+
+    acquired = connection.exec_driver_sql(
+        f"select pg_try_advisory_lock({MIGRATION_LOCK_KEY})"
+    ).scalar()
+    if not acquired:
+        raise ConcurrentMigration(
+            "another migration is already running against this database "
+            "(advisory lock held). Wait for it to finish rather than forcing "
+            "this one through: two concurrent migrations can leave the schema "
+            "in a state neither of them describes."
+        )
+
+    lock_timeout = os.environ.get(LOCK_TIMEOUT_ENV_VAR, DEFAULT_LOCK_TIMEOUT)
+    statement_timeout = os.environ.get(
+        STATEMENT_TIMEOUT_ENV_VAR, DEFAULT_STATEMENT_TIMEOUT
+    )
+    # Quoted as literals rather than bound parameters: SET does not accept
+    # placeholders. The values come from the deployer's own environment.
+    connection.execute(text(f"set lock_timeout = '{lock_timeout}'"))
+    connection.execute(text(f"set statement_timeout = '{statement_timeout}'"))
+
+    # Those statements opened an implicit transaction. Leaving it open makes
+    # alembic's own `begin_transaction()` nest inside it, so the migration is
+    # never committed and the database comes back empty with every command
+    # reporting success — a silent no-op, which is the worst possible outcome
+    # for a migration tool. Ending it here is safe: both the advisory lock and
+    # a plain SET are session-scoped, not transaction-scoped, so they outlive
+    # the commit and still cover the migration that follows.
+    connection.commit()
 
 
 class SchemaMetadata(Base):
@@ -111,7 +188,9 @@ def stamp_schema_version(
     if existing is None:
         connection.execute(table.insert().values(id=1, **values))
     else:
-        connection.execute(table.update().where(table.c.id == existing).values(**values))
+        connection.execute(
+            table.update().where(table.c.id == existing).values(**values)
+        )
 
 
 def require_matching_schema(engine: Engine) -> SchemaState:

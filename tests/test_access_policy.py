@@ -138,7 +138,10 @@ class TestRules:
                         "person", DOCTOR, RuleEffect.ALLOW, Confidentiality.RESTRICTED
                     ),
                     RuleSnapshot(
-                        "organization", HOSPITAL, RuleEffect.DENY, Confidentiality.NORMAL
+                        "organization",
+                        HOSPITAL,
+                        RuleEffect.DENY,
+                        Confidentiality.NORMAL,
                     ),
                 )
             )
@@ -150,7 +153,9 @@ class TestRules:
         decision = decide(
             consent(
                 rules=(
-                    RuleSnapshot("person", OTHER_DOCTOR, RuleEffect.DENY, Confidentiality.NORMAL),
+                    RuleSnapshot(
+                        "person", OTHER_DOCTOR, RuleEffect.DENY, Confidentiality.NORMAL
+                    ),
                 )
             )
         )
@@ -161,7 +166,10 @@ class TestRules:
             consent(
                 rules=(
                     RuleSnapshot(
-                        "organization", HOSPITAL, RuleEffect.ALLOW, Confidentiality.RESTRICTED
+                        "organization",
+                        HOSPITAL,
+                        RuleEffect.ALLOW,
+                        Confidentiality.RESTRICTED,
                     ),
                 )
             )
@@ -206,9 +214,14 @@ class TestRules:
         decision = decide(
             consent(
                 rules=(
-                    RuleSnapshot("person", DOCTOR, RuleEffect.ALLOW, Confidentiality.NORMAL),
                     RuleSnapshot(
-                        "organization", HOSPITAL, RuleEffect.ALLOW, Confidentiality.RESTRICTED
+                        "person", DOCTOR, RuleEffect.ALLOW, Confidentiality.NORMAL
+                    ),
+                    RuleSnapshot(
+                        "organization",
+                        HOSPITAL,
+                        RuleEffect.ALLOW,
+                        Confidentiality.RESTRICTED,
                     ),
                 )
             )
@@ -221,7 +234,9 @@ class TestEmergency:
         decision = decide(
             consent(
                 rules=(
-                    RuleSnapshot("person", DOCTOR, RuleEffect.DENY, Confidentiality.NORMAL),
+                    RuleSnapshot(
+                        "person", DOCTOR, RuleEffect.DENY, Confidentiality.NORMAL
+                    ),
                 )
             ),
             purpose=Purpose.EMERGENCY,
@@ -250,7 +265,8 @@ class TestEmergency:
 
 class TestPurposeAndKind:
     @pytest.mark.parametrize(
-        "purpose", [Purpose.ADMINISTRATION, Purpose.PATIENT_ACCESS, Purpose.REPRESENTATIVE]
+        "purpose",
+        [Purpose.ADMINISTRATION, Purpose.PATIENT_ACCESS, Purpose.REPRESENTATIVE],
     )
     def test_a_third_party_cannot_use_a_patient_only_purpose(self, purpose):
         decision = decide(consent(), purpose=purpose)

@@ -31,7 +31,9 @@ class UtcDateTime(TypeDecorator):
     impl = DateTime
     cache_ok = True
 
-    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+    def process_bind_param(
+        self, value: datetime | None, dialect: Any
+    ) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
@@ -42,7 +44,9 @@ class UtcDateTime(TypeDecorator):
             return value.astimezone(UTC).replace(tzinfo=None)
         return value
 
-    def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
+    def process_result_value(
+        self, value: datetime | None, dialect: Any
+    ) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
@@ -60,13 +64,13 @@ class Confidentiality(StrEnum):
 
     NORMAL = "normal"
     RESTRICTED = "restricted"
-    SECRET = "secret"
+    SECRET = "secret"  # noqa: S105 (a confidentiality level, not a secret)
 
     @property
     def rank(self) -> int:
         return {"normal": 0, "restricted": 1, "secret": 2}[self.value]
 
-    def is_reachable_from(self, granted: "Confidentiality") -> bool:
+    def is_reachable_from(self, granted: Confidentiality) -> bool:
         """A grant at ``granted`` may read documents up to that level."""
         return self.rank <= granted.rank
 

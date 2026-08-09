@@ -18,8 +18,9 @@ two versions be compared, without restating the content.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session

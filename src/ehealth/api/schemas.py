@@ -218,7 +218,7 @@ class SessionOut(BaseModel):
     session_uid: str
     access_token: str
     refresh_token: str
-    token_type: str = "Bearer"
+    token_type: str = "Bearer"  # noqa: S105 (a scheme name, not a secret)
     expires_at: datetime
     person_uid: str
     scopes: list[str]

@@ -141,9 +141,7 @@ class OfflineSyncService:
             if capture.client_uid in seen:
                 # Duplicated *within* the batch — a client bug, but the
                 # answer is the same as any other retry.
-                results.append(
-                    SyncResult(capture.client_uid, SyncOutcome.DUPLICATE)
-                )
+                results.append(SyncResult(capture.client_uid, SyncOutcome.DUPLICATE))
                 continue
             seen.add(capture.client_uid)
             results.append(self._apply_one(session, access, capture, recorded_by_uid))
@@ -186,9 +184,7 @@ class OfflineSyncService:
                     f"{capture.statement.kind.value} cannot be captured offline"
                 )
         except SyncError as exc:
-            return SyncResult(
-                capture.client_uid, SyncOutcome.REJECTED, reason=str(exc)
-            )
+            return SyncResult(capture.client_uid, SyncOutcome.REJECTED, reason=str(exc))
 
         # A savepoint per item: a rejection undoes only that item's partial
         # writes, and the rest of the batch still lands.
@@ -205,9 +201,7 @@ class OfflineSyncService:
             session.flush()
         except (MedicationError, SyncError) as exc:
             savepoint.rollback()
-            return SyncResult(
-                capture.client_uid, SyncOutcome.REJECTED, reason=str(exc)
-            )
+            return SyncResult(capture.client_uid, SyncOutcome.REJECTED, reason=str(exc))
         savepoint.commit()
         return SyncResult(
             capture.client_uid, SyncOutcome.APPLIED, statement_uid=statement.uid

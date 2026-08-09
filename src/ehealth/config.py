@@ -112,7 +112,7 @@ class Settings(BaseSettings):
         return value.strip()
 
     @model_validator(mode="after")
-    def _production_hardening(self) -> "Settings":
+    def _production_hardening(self) -> Settings:
         if self.environment is Environment.PRODUCTION:
             problems = []
             if not self.root_key:

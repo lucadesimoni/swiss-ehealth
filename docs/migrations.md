@@ -100,14 +100,54 @@ deliberately compatible, or a short maintenance window.
 
 **Back up before migrating.** Test the restore, not just the backup.
 
+## Running two migrations at once
+
+`alembic upgrade head` takes a PostgreSQL advisory lock before it touches
+anything, and a second migrator is **refused immediately** rather than left to
+block:
+
+```
+another migration is already running against this database (advisory lock
+held). Wait for it to finish rather than forcing this one through: two
+concurrent migrations can leave the schema in a state neither of them
+describes.
+```
+
+Two deployers migrating at the same time is not hypothetical — a retried
+pipeline or a two-region rolling deploy does it by default. `pg_try_advisory_lock`
+returns instead of blocking, so the collision is reported rather than
+appearing as a deploy that hangs.
+
+Two timeouts are set for the migration session:
+
+| Variable | Default | Why |
+|---|---|---|
+| `EHEALTH_MIGRATION_LOCK_TIMEOUT` | `5s` | An `ALTER TABLE` waits behind any open transaction on the table, and every *later* query queues behind the waiting `ALTER` because PostgreSQL grants locks in order. One long-running report can therefore stall the whole table. Giving up after five seconds turns an outage into a retryable deploy. |
+| `EHEALTH_MIGRATION_STATEMENT_TIMEOUT` | `0` (none) | A legitimate index build on a national-scale table runs for hours and must not be killed halfway. Set it for migrations you expect to be quick. |
+
+On SQLite the guard is a no-op: there is only ever one writer.
+
+## PostgreSQL
+
+The migrations are run against PostgreSQL 16 by
+`make test-postgres PGURL=…` and by the `test-postgres` job in CI, which also
+runs `alembic upgrade head` as a bare command — the way an operator does —
+and then runs it a second time to prove a redeploy is a no-op.
+
+The drift check runs on whichever backend the suite is pointed at, so on
+PostgreSQL it compares against real reflected types. It reports zero
+differences, which is the evidence that the JSONB variant and the custom
+`UtcDateTime` reflect back as what they were declared to be.
+
 ## What is still missing
 
-- **No migration has been run against PostgreSQL here.** The migration was
-  generated and applied on SQLite. `render_as_batch` is enabled only for
-  SQLite, and the JSONB variant is exercised by the type definition but not by
-  an actual PostgreSQL run. Verify against PostgreSQL before a production
-  deployment.
-- **No zero-downtime tooling.** No advisory-lock guard against two migrators
-  starting at once, no statement timeout, no online index creation
-  (`CREATE INDEX CONCURRENTLY`). On a table of a national record's size, an
-  index build without it takes a write lock for the duration.
+- **No online index creation.** `CREATE INDEX CONCURRENTLY` cannot run inside
+  a transaction, so it needs a migration marked as non-transactional and a
+  different failure story (a failed concurrent build leaves an invalid index
+  that must be dropped by hand). On a table of a national record's size, an
+  ordinary index build takes a write lock for its whole duration.
+- **No expand/contract tooling.** The procedure below is written down but
+  nothing enforces that a migration is safe to run against the previous
+  build's code.
+- **No restore rehearsal.** Backups are named in the deployment guide; nothing
+  here tests that one can actually be restored.

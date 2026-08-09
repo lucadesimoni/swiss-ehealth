@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 
 from ehealth.main import SECURITY_HEADERS
-
 from tests.conftest import AHVN_ANNA, login
 
 
@@ -343,9 +342,7 @@ class TestEmergency:
         )
 
         trail = client.get("/v1/audit/me", headers=patient.auth_header)
-        assert any(
-            event["action"] == "access.emergency" for event in trail.json()
-        )
+        assert any(event["action"] == "access.emergency" for event in trail.json())
 
     def test_a_patient_cannot_invoke_emergency_access(
         self, client, mock_idp, outbox, registry
@@ -386,7 +383,10 @@ class TestPatientSelfAccess:
         assert capability.status_code == 200, capability.text
         assert capability.json()["access_level"] == "secret"
 
-        cap_headers = {**patient.auth_header, "X-Capability": capability.json()["token"]}
+        cap_headers = {
+            **patient.auth_header,
+            "X-Capability": capability.json()["token"],
+        }
         dossier_uid = registry["dossier"]["uid"]
         secret = client.post(
             f"/v1/dossiers/{dossier_uid}/documents",

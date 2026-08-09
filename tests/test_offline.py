@@ -173,9 +173,11 @@ class TestEmergencyDataset:
             db, patient=world.patient, dossier=world.dossier, actor=patient_access.actor
         )
         db.commit()
-        event = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "data.exported")
-        ).scalars().one()
+        event = (
+            db.execute(select(AuditEvent).where(AuditEvent.action == "data.exported"))
+            .scalars()
+            .one()
+        )
         assert event.detail["bundle_kind"] == "emergency"
         assert len(event.detail["bundle_digest"]) == 64
 
@@ -220,9 +222,13 @@ class TestBundleVerification:
         _, body, signature = bundle.split(".")
         header = b64u(canonical_json({"alg": "none", "typ": "BUNDLE"}))
         with pytest.raises(BundleVerificationError, match="unsupported algorithm"):
-            verify_bundle(f"{header}.{body}.{signature}", container.offline.public_key())
+            verify_bundle(
+                f"{header}.{body}.{signature}", container.offline.public_key()
+            )
 
-    def test_rejects_an_unknown_format_version(self, container, db, world, patient_access):
+    def test_rejects_an_unknown_format_version(
+        self, container, db, world, patient_access
+    ):
         service = container.offline
         payload = {
             "v": BUNDLE_VERSION + 99,
@@ -405,9 +411,7 @@ class TestOfflineSync:
         assert report.rejected == 1
         assert "future" in report.results[0].reason
 
-    def test_rejects_a_naive_capture_time(
-        self, container, db, world, patient_access
-    ):
+    def test_rejects_a_naive_capture_time(self, container, db, world, patient_access):
         from datetime import datetime
 
         report = container.sync.apply(
@@ -428,9 +432,7 @@ class TestOfflineSync:
                 recorded_by_uid=world.patient.uid,
             )
 
-    def test_the_sync_itself_is_audited(
-        self, container, db, world, patient_access
-    ):
+    def test_the_sync_itself_is_audited(self, container, db, world, patient_access):
         from sqlalchemy import select
 
         from ehealth.models.audit import AuditEvent
@@ -442,9 +444,13 @@ class TestOfflineSync:
             recorded_by_uid=world.patient.uid,
         )
         db.commit()
-        event = db.execute(
-            select(AuditEvent).where(AuditEvent.resource_type == "offline_sync")
-        ).scalars().one()
+        event = (
+            db.execute(
+                select(AuditEvent).where(AuditEvent.resource_type == "offline_sync")
+            )
+            .scalars()
+            .one()
+        )
         assert event.detail == {
             "items": 1,
             "applied": 1,
@@ -510,9 +516,7 @@ class TestOfflineOverHttp:
         assert verified.is_current
         assert verified.subject_spid == registry["patient"]["spid"]
 
-    def test_sync_over_http_is_idempotent(
-        self, client, mock_idp, outbox, registry
-    ):
+    def test_sync_over_http_is_idempotent(self, client, mock_idp, outbox, registry):
         from tests.conftest import login
 
         patient = login(

@@ -116,7 +116,7 @@ class AuthService:
         identity: IdentityService,
         keyring: KeyRing,
         ledger: AuditLedger,
-        persons: "PersonService",
+        persons: PersonService,
         session_ttl_seconds: int = 900,
         refresh_ttl_seconds: int = 43_200,
         otp_max_attempts: int = 5,
@@ -148,11 +148,15 @@ class AuthService:
         idp_assurance: AssuranceLevel = AssuranceLevel.AAL1,
     ) -> IdentityAccount:
         """Bind a federated identity to a person. Enrolment, not login."""
-        existing = session.execute(
-            select(IdentityAccount).where(
-                IdentityAccount.issuer == issuer, IdentityAccount.subject == subject
+        existing = (
+            session.execute(
+                select(IdentityAccount).where(
+                    IdentityAccount.issuer == issuer, IdentityAccount.subject == subject
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             raise AuthError("this identity is already linked to an account")
         if self._account_for_person(session, person.uid) is not None:
@@ -184,7 +188,9 @@ class AuthService:
         return account
 
     @staticmethod
-    def _account_for_person(session: Session, person_uid: str) -> IdentityAccount | None:
+    def _account_for_person(
+        session: Session, person_uid: str
+    ) -> IdentityAccount | None:
         return (
             session.execute(
                 select(IdentityAccount).where(IdentityAccount.person_uid == person_uid)
@@ -195,9 +201,7 @@ class AuthService:
 
     # -- step 1: SwissID --------------------------------------------------
 
-    def begin_login(
-        self, session: Session, actor: ActorContext
-    ) -> tuple[str, str]:
+    def begin_login(self, session: Session, actor: ActorContext) -> tuple[str, str]:
         """Start the authorisation code flow. Returns (redirect URL, state)."""
         request = self._provider.start()
         now = utcnow()
@@ -329,9 +333,7 @@ class AuthService:
         self._otp.deliver(
             to=address,
             code=material.code,
-            expires_in_seconds=int(
-                (material.expires_at - utcnow()).total_seconds()
-            ),
+            expires_in_seconds=int((material.expires_at - utcnow()).total_seconds()),
         )
         challenge.delivered = True
         session.flush()
@@ -463,7 +465,11 @@ class AuthService:
     # -- session tokens ---------------------------------------------------
 
     def _mint_session_tokens(
-        self, session: Session, auth_session: AuthSession, *, parent_jti: str | None = None
+        self,
+        session: Session,
+        auth_session: AuthSession,
+        *,
+        parent_jti: str | None = None,
     ) -> SessionTokens:
         person = session.get(Person, auth_session.person_uid)
         if person is None:

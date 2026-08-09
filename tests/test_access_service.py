@@ -17,14 +17,13 @@ from sqlalchemy import select
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditEvent
 from ehealth.models.base import Confidentiality, Purpose
+from ehealth.models.clinical import MedicationEventKind
 from ehealth.models.core import PersonRoleKind
 from ehealth.models.governance import GrantStatus, IssuedToken, RuleEffect
 from ehealth.security.tokens import Scope
 from ehealth.services.access import AccessError
 from ehealth.services.dossier import DocumentInput
 from ehealth.services.medication import StatementInput
-from ehealth.models.clinical import MedicationEventKind
-
 
 TREATMENT_SCOPES = [
     Scope.DOSSIER_READ,
@@ -122,9 +121,11 @@ class TestGranting:
                 purpose=Purpose.TREATMENT,
                 scopes=[Scope.DOSSIER_READ],
             )
-        denials = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "access.denied")
-        ).scalars().all()
+        denials = (
+            db.execute(select(AuditEvent).where(AuditEvent.action == "access.denied"))
+            .scalars()
+            .all()
+        )
         assert len(denials) == 1
 
 
@@ -214,9 +215,7 @@ class TestMinting:
         record."""
         assert db.get(IssuedToken, doctor_token.jti) is not None
 
-    def test_a_token_never_outlives_its_grant(
-        self, container, db, system_actor, world
-    ):
+    def test_a_token_never_outlives_its_grant(self, container, db, system_actor, world):
         grant = container.access.issue_grant(
             db,
             system_actor,
@@ -274,9 +273,7 @@ class TestAuthorising:
                 db, capability.token, required_scope=Scope.MEDICATION_WRITE
             )
 
-    def test_rejects_a_token_for_another_dossier(
-        self, container, db, doctor_token
-    ):
+    def test_rejects_a_token_for_another_dossier(self, container, db, doctor_token):
         with pytest.raises(AccessError):
             container.access.authorize(
                 db,
@@ -307,9 +304,7 @@ class TestAuthorising:
             )
         )
         with pytest.raises(AccessError):
-            container.access.authorize(
-                db, forged, required_scope=Scope.DOSSIER_READ
-            )
+            container.access.authorize(db, forged, required_scope=Scope.DOSSIER_READ)
 
     def test_revoking_the_grant_kills_live_tokens(
         self, container, db, system_actor, doctor_grant, doctor_token
@@ -365,9 +360,11 @@ class TestAuthorising:
                 db, "not-a-token", required_scope=Scope.DOSSIER_READ
             )
         db.commit()
-        rejections = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "token.rejected")
-        ).scalars().all()
+        rejections = (
+            db.execute(select(AuditEvent).where(AuditEvent.action == "token.rejected"))
+            .scalars()
+            .all()
+        )
         assert len(rejections) == 1
         assert rejections[0].outcome == "denied"
 
@@ -389,30 +386,28 @@ class TestEmergencyAccess:
         db.commit()
         return capability
 
-    def test_reaches_restricted_but_never_secret(
-        self, container, db, emergency_token
-    ):
+    def test_reaches_restricted_but_never_secret(self, container, db, emergency_token):
         access = container.access.authorize(
             db, emergency_token.token, required_scope=Scope.DOSSIER_READ
         )
         assert access.max_level is Confidentiality.RESTRICTED
 
-    def test_writes_a_dedicated_emergency_event(
-        self, container, db, emergency_token
-    ):
+    def test_writes_a_dedicated_emergency_event(self, container, db, emergency_token):
         container.access.authorize(
             db, emergency_token.token, required_scope=Scope.DOSSIER_READ
         )
         db.commit()
-        events = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "access.emergency")
-        ).scalars().all()
+        events = (
+            db.execute(
+                select(AuditEvent).where(AuditEvent.action == "access.emergency")
+            )
+            .scalars()
+            .all()
+        )
         assert len(events) == 1
         assert events[0].detail["notify_patient"] is True
 
-    def test_overrides_an_exclusion_rule(
-        self, container, db, system_actor, world
-    ):
+    def test_overrides_an_exclusion_rule(self, container, db, system_actor, world):
         container.consents.add_rule(
             db,
             system_actor,

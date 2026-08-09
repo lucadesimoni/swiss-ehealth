@@ -65,9 +65,7 @@ def build_container(settings: Settings | None = None) -> Container:
     settings = settings or get_settings()
     keyring = settings.keyring()
 
-    identity = IdentityService(
-        keyring, store_sealed_ahvn=settings.store_sealed_ahvn
-    )
+    identity = IdentityService(keyring, store_sealed_ahvn=settings.store_sealed_ahvn)
     ledger = AuditLedger(keyring)
     tracker = ChangeTracker(ledger)
     tokens = TokenService(
@@ -89,9 +87,7 @@ def build_container(settings: Settings | None = None) -> Container:
         raise RuntimeError("production requires a real SMTP sender")
 
     provider: IdentityProvider = (
-        MockIdentityProvider(
-            production=settings.environment is Environment.PRODUCTION
-        )
+        MockIdentityProvider(production=settings.environment is Environment.PRODUCTION)
         if settings.use_mock_idp
         else SwissIdClient(
             OidcConfig(

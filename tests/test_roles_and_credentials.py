@@ -35,7 +35,6 @@ from ehealth.services.persons import (
     PersonError,
     PersonRegistration,
 )
-
 from tests.conftest import AHVN_DORA
 
 
@@ -68,7 +67,9 @@ class TestMultipleRoles:
     def test_a_doctor_can_also_be_a_patient(self, container, db, world):
         """The whole point: one person, one UID, one pseudonym, two roles."""
         roles = {
-            r.role for r in container.persons.roles(db, world.doctor.uid) if r.is_live(utcnow())
+            r.role
+            for r in container.persons.roles(db, world.doctor.uid)
+            if r.is_live(utcnow())
         }
         assert roles == {"patient", "healthcare_professional"}
         assert world.doctor.uid.startswith("per_")
@@ -187,7 +188,7 @@ class TestCredentials:
     def test_verification_is_recorded_with_its_source(
         self, container, db, system_actor, world
     ):
-        """"We were told" and "we checked" must never look the same."""
+        """ "We were told" and "we checked" must never look the same."""
         person = register(container, db, system_actor)
         credential = credential_for(container, db, system_actor, person)
         assert credential.is_verified is False
@@ -220,9 +221,7 @@ class TestCredentials:
         )
         assert not credential.may_prescribe(date.today())
 
-    def test_a_suspended_licence_does_not(
-        self, container, db, system_actor, world
-    ):
+    def test_a_suspended_licence_does_not(self, container, db, system_actor, world):
         container.persons.suspend_credential(
             db, world.credential, system_actor, reason="disciplinary measure"
         )
@@ -374,7 +373,13 @@ class TestPrescribingAuthority:
         assert statement.recorded_by_gln is None
 
     def test_a_nurse_may_administer_but_not_prescribe(
-        self, container, db, system_actor, world, doctor_access, prescription_only_product
+        self,
+        container,
+        db,
+        system_actor,
+        world,
+        doctor_access,
+        prescription_only_product,
     ):
         nurse = register(container, db, system_actor)
         credential_for(
@@ -449,9 +454,13 @@ class TestPrescribingAuthority:
             recorded_by_uid=world.doctor.uid,
         )
         db.commit()
-        event = db.execute(
-            select(AuditEvent).where(AuditEvent.action == "medication.added")
-        ).scalars().one()
+        event = (
+            db.execute(
+                select(AuditEvent).where(AuditEvent.action == "medication.added")
+            )
+            .scalars()
+            .one()
+        )
         assert event.detail["narcotic_schedule"] == "a"
         assert event.detail["dispensing_category"] == "A"
         assert event.detail["prescriber_gln"] == world.credential.gln

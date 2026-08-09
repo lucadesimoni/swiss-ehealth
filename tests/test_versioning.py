@@ -149,9 +149,7 @@ class TestLedgerCarriesTheVersion:
         assert event.software_version == version_label()
         assert event.payload_version == AUDIT_PAYLOAD_VERSION
 
-    def test_the_version_is_covered_by_the_signature(
-        self, container, db, system_actor
-    ):
+    def test_the_version_is_covered_by_the_signature(self, container, db, system_actor):
         container.ledger.append(
             db,
             actor=system_actor,
@@ -169,9 +167,7 @@ class TestLedgerCarriesTheVersion:
         assert not result.ok
         assert "modified" in result.reason
 
-    def test_an_unknown_payload_version_fails_closed(
-        self, container, db, system_actor
-    ):
+    def test_an_unknown_payload_version_fails_closed(self, container, db, system_actor):
         """A build that cannot rebuild an entry's payload must report that,
         not wave the entry through as sound."""
         container.ledger.append(

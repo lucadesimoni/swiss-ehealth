@@ -63,9 +63,7 @@ class IdentityAccount(Base, TimestampMixin, UidPk):
     email_enc: Mapped[str] = mapped_column(String(512), nullable=False)
     #: Blind index so "which account owns this address" stays answerable.
     email_index: Mapped[str] = mapped_column(String(80), nullable=False)
-    email_verified: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=AccountStatus.ACTIVE.value
     )

@@ -62,9 +62,7 @@ class TestEnvelopeEncryption:
         assert keyring.decrypt(envelope, aad=b"field|pat_1|family_name") == b"Muster"
 
     def test_ciphertext_does_not_contain_the_plaintext(self, keyring):
-        envelope = keyring.encrypt(
-            KeyPurpose.FIELD_ENCRYPTION, b"Muster", aad=b"x"
-        )
+        envelope = keyring.encrypt(KeyPurpose.FIELD_ENCRYPTION, b"Muster", aad=b"x")
         assert "Muster" not in envelope
 
     def test_rejects_a_transplanted_ciphertext(self, keyring):
@@ -109,7 +107,9 @@ class TestSignatures:
 
     def test_a_different_key_version_does_not_verify(self, keyring):
         signature = keyring.signer(KeyPurpose.AUDIT_LEDGER, 1).sign(b"payload")
-        assert not keyring.signer(KeyPurpose.AUDIT_LEDGER, 2).verify(b"payload", signature)
+        assert not keyring.signer(KeyPurpose.AUDIT_LEDGER, 2).verify(
+            b"payload", signature
+        )
 
 
 class TestCanonicalJson:
@@ -128,9 +128,10 @@ class TestHashChain:
     def test_is_domain_separated(self):
         import hashlib
 
-        assert hash_chain_link(GENESIS_HASH, b"a") != hashlib.sha256(
-            GENESIS_HASH + b"a"
-        ).digest()
+        assert (
+            hash_chain_link(GENESIS_HASH, b"a")
+            != hashlib.sha256(GENESIS_HASH + b"a").digest()
+        )
 
 
 def test_constant_time_equals_handles_both_types():

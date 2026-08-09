@@ -16,7 +16,7 @@ from ehealth.models.audit import (
     AuditOutcome,
     LedgerAnchorChain,
 )
-from ehealth.models.core import PersonStatus
+from ehealth.models.core import PersonRoleKind, PersonStatus
 from ehealth.security.crypto import GENESIS_HASH
 from ehealth.services.audit import (
     GLOBAL_CHAIN,
@@ -31,8 +31,6 @@ from ehealth.services.changelog import (
     snapshot,
 )
 from ehealth.services.persons import PersonRegistration
-from ehealth.models.core import PersonRoleKind
-
 from tests.conftest import AHVN_DORA
 
 
@@ -74,7 +72,9 @@ class TestChain:
             append(ledger, db, system_actor)
         db.commit()
 
-        target = db.execute(select(AuditEvent).where(AuditEvent.seq == 3)).scalars().one()
+        target = (
+            db.execute(select(AuditEvent).where(AuditEvent.seq == 3)).scalars().one()
+        )
         target.actor_uid = "hcp_someone_else_entirely_aaaaa"
         db.commit()
 
@@ -87,7 +87,9 @@ class TestChain:
         for _ in range(5):
             append(ledger, db, system_actor)
         db.commit()
-        db.delete(db.execute(select(AuditEvent).where(AuditEvent.seq == 3)).scalars().one())
+        db.delete(
+            db.execute(select(AuditEvent).where(AuditEvent.seq == 3)).scalars().one()
+        )
         db.commit()
 
         result = ledger.verify_chain(db)
@@ -97,7 +99,9 @@ class TestChain:
     def test_detects_a_forged_signature(self, ledger, db, system_actor):
         append(ledger, db, system_actor)
         db.commit()
-        event = db.execute(select(AuditEvent).where(AuditEvent.seq == 1)).scalars().one()
+        event = (
+            db.execute(select(AuditEvent).where(AuditEvent.seq == 1)).scalars().one()
+        )
         event.signature = "A" * 86
         db.commit()
         result = ledger.verify_chain(db)
@@ -107,7 +111,9 @@ class TestChain:
     def test_detects_an_algorithm_downgrade(self, ledger, db, system_actor):
         append(ledger, db, system_actor)
         db.commit()
-        event = db.execute(select(AuditEvent).where(AuditEvent.seq == 1)).scalars().one()
+        event = (
+            db.execute(select(AuditEvent).where(AuditEvent.seq == 1)).scalars().one()
+        )
         event.algorithm = "none"
         db.commit()
         assert not ledger.verify_chain(db).ok
@@ -132,9 +138,7 @@ class TestPartitionedChains:
         # Both are the first entry *of their own chain*.
         assert first.seq == second.seq == 1
 
-    def test_non_dossier_events_go_to_the_global_chain(
-        self, ledger, db, system_actor
-    ):
+    def test_non_dossier_events_go_to_the_global_chain(self, ledger, db, system_actor):
         assert append(ledger, db, system_actor).chain_id == GLOBAL_CHAIN
 
     def test_each_chain_links_independently(self, ledger, db, system_actor):
@@ -153,11 +157,15 @@ class TestPartitionedChains:
             append(ledger, db, system_actor, dossier_uid="dos_B")
         db.commit()
 
-        target = db.execute(
-            select(AuditEvent).where(
-                AuditEvent.chain_id == "dos_A", AuditEvent.seq == 2
+        target = (
+            db.execute(
+                select(AuditEvent).where(
+                    AuditEvent.chain_id == "dos_A", AuditEvent.seq == 2
+                )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         target.actor_uid = "per_someone_else_entirely_aaa"
         db.commit()
 
@@ -218,9 +226,7 @@ class TestAnchoring:
         second = ledger.anchor(db, "2026-08-08")
         assert second.previous_anchor_hash == first.anchor_hash
 
-    def test_a_second_anchor_covers_only_new_events(
-        self, ledger, db, system_actor
-    ):
+    def test_a_second_anchor_covers_only_new_events(self, ledger, db, system_actor):
         append(ledger, db, system_actor, dossier_uid="dos_A")
         db.commit()
         ledger.anchor(db, "2026-08-07")
@@ -241,11 +247,15 @@ class TestAnchoring:
         append(ledger, db, system_actor, dossier_uid="dos_B")
         db.commit()
         second = ledger.anchor(db, "2026-08-08")
-        chains = db.execute(
-            select(LedgerAnchorChain).where(
-                LedgerAnchorChain.anchor_uid == second.uid
+        chains = (
+            db.execute(
+                select(LedgerAnchorChain).where(
+                    LedgerAnchorChain.anchor_uid == second.uid
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [c.chain_id for c in chains] == ["dos_B"]
 
     def test_detects_a_rewritten_checkpoint(self, ledger, db, system_actor):
@@ -255,11 +265,15 @@ class TestAnchoring:
         db.commit()
         assert ledger.verify_anchor(db, anchor)
 
-        checkpoint = db.execute(
-            select(LedgerAnchorChain).where(
-                LedgerAnchorChain.anchor_uid == anchor.uid
+        checkpoint = (
+            db.execute(
+                select(LedgerAnchorChain).where(
+                    LedgerAnchorChain.anchor_uid == anchor.uid
+                )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         checkpoint.head_hash = "0" * 64
         db.commit()
         assert not ledger.verify_anchor(db, anchor)
@@ -310,7 +324,7 @@ class TestMerkle:
         """Duplicating the odd node is the CVE-2012-2459 mistake: two
         different leaf sets would then produce one root."""
         leaves = [merkle_leaf(f"dos_{i}", f"{i:064d}", 1) for i in range(3)]
-        assert merkle_root(leaves) != merkle_root(leaves + [leaves[-1]])
+        assert merkle_root(leaves) != merkle_root([*leaves, leaves[-1]])
 
 
 class TestAuditContent:
@@ -408,7 +422,10 @@ class TestChangeTracking:
         container.persons.update_contact(db, world.patient, system_actor, phone="+41 3")
         db.commit()
         at_creation = ChangeTracker.version_at(
-            db, "person", world.patient.uid, first.valid_from + timedelta(microseconds=1)
+            db,
+            "person",
+            world.patient.uid,
+            first.valid_from + timedelta(microseconds=1),
         )
         assert at_creation.version == 1
         now = ChangeTracker.version_at(db, "person", world.patient.uid, utcnow())

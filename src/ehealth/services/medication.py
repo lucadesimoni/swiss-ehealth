@@ -249,7 +249,7 @@ class MedicationService:
         self,
         ledger: AuditLedger,
         tracker: ChangeTracker,
-        persons: "PersonService | None" = None,
+        persons: PersonService | None = None,
     ) -> None:
         self._ledger = ledger
         self._tracker = tracker
@@ -277,9 +277,7 @@ class MedicationService:
             if product is None:
                 raise MedicationError("unknown product")
             if not product.is_marketable(utcnow().date()):
-                raise MedicationError(
-                    "product is not authorised for the Swiss market"
-                )
+                raise MedicationError("product is not authorised for the Swiss market")
 
         credential = self._check_authority(
             session, statement, product, recorded_by_uid=recorded_by_uid
@@ -306,9 +304,8 @@ class MedicationService:
             effective_start=statement.effective_start or utcnow(),
             effective_end=statement.effective_end,
             recorded_by_uid=recorded_by_uid,
-            organization_uid=organization_uid or (
-                credential.organization_uid if credential else None
-            ),
+            organization_uid=organization_uid
+            or (credential.organization_uid if credential else None),
             recorded_under_credential_uid=credential.uid if credential else None,
             recorded_by_gln=credential.gln if credential else None,
             based_on_uid=statement.based_on_uid,
@@ -326,9 +323,7 @@ class MedicationService:
                 "product_uid": record.product_uid,
                 # Narcotics get their own flag in the trail so a BetmG audit is
                 # a query rather than a reconstruction.
-                "narcotic_schedule": (
-                    product.narcotic_schedule if product else None
-                ),
+                "narcotic_schedule": (product.narcotic_schedule if product else None),
                 "dispensing_category": (
                     product.dispensing_category if product else None
                 ),
@@ -345,7 +340,7 @@ class MedicationService:
         product: MedicinalProduct | None,
         *,
         recorded_by_uid: str,
-    ) -> "ProfessionalCredential | None":
+    ) -> ProfessionalCredential | None:
         """Refuse a clinical entry from someone who may not make it.
 
         The rule that matters: a prescription-only product (Swissmedic

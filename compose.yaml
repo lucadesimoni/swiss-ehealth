@@ -32,6 +32,41 @@ services:
       - "5432"
     restart: unless-stopped
 
+  # Migrations run to completion before the application is allowed to start.
+  # Without this the app boots against an empty database, the schema guard
+  # refuses to serve, and the container restart-loops with an error that looks
+  # like a bug in the application rather than a missing step.
+  #
+  # It is safe to run on every `up`: alembic is a no-op when the database is
+  # already at head, and an advisory lock means two of these starting at once
+  # do not both migrate.
+  migrate:
+    build:
+      context: .
+      args:
+        GIT_REVISION: ${GIT_REVISION:-unknown}
+        BUILD_TIMESTAMP: ${BUILD_TIMESTAMP:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      EHEALTH_DATABASE_URL: postgresql+psycopg://ehealth:${POSTGRES_PASSWORD}@db:5432/ehealth
+      EHEALTH_ROOT_KEY: ${EHEALTH_ROOT_KEY:?set EHEALTH_ROOT_KEY in .env, see make keygen}
+      EHEALTH_ISSUER: ${EHEALTH_ISSUER:-https://dossier.example.ch}
+    entrypoint: ["alembic", "upgrade", "head"]
+    working_dir: /srv
+    volumes:
+      - ./alembic.ini:/srv/alembic.ini:ro
+      - ./migrations:/srv/migrations:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   app:
     build:
       context: .
@@ -41,6 +76,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       EHEALTH_ENVIRONMENT: ${EHEALTH_ENVIRONMENT:-staging}
       EHEALTH_DATABASE_URL: postgresql+psycopg://ehealth:${POSTGRES_PASSWORD}@db:5432/ehealth

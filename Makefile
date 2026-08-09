@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-.PHONY: install test test-verbose run seed keygen clean version verify-version release \
-        record-release releases migrate migration migrate-status
+.PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
+        version verify-version release record-release releases \
+        migrate migration migrate-status
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -20,6 +21,28 @@ test:
 
 test-verbose:
 	$(PY) -m pytest -v
+
+## The same suite against PostgreSQL, which is what production runs.
+##
+##   make test-postgres PGURL=postgresql+psycopg://ehealth:pw@localhost:5432/ehealth
+##
+## Each test gets its own schema in that database, created and dropped around
+## it. SQLite cannot see a JSONB mismatch, a reserved word, or PostgreSQL's
+## stricter transactional rules, so a green SQLite run is not evidence that a
+## deployment will work.
+test-postgres:
+	@test -n "$(PGURL)" || { \
+	  echo 'usage: make test-postgres PGURL=postgresql+psycopg://user:pw@host:5432/db'; \
+	  exit 1; }
+	EHEALTH_TEST_DATABASE_URL="$(PGURL)" $(PY) -m pytest -q
+
+lint:
+	$(PY) -m ruff check src tests migrations
+	$(PY) -m ruff format --check src tests migrations
+
+format:
+	$(PY) -m ruff check --fix src tests migrations
+	$(PY) -m ruff format src tests migrations
 
 run:
 	EHEALTH_ADMIN_API_KEY=$${EHEALTH_ADMIN_API_KEY:-local-development-admin-key-0123456789} \

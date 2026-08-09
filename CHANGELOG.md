@@ -44,6 +44,54 @@ ledger; where it is absent the ledger stands alone.
 - `make record-release` appends the current commit.
 - `make verify-version` now covers the ledger as well as the three files.
 
+**PostgreSQL is now actually tested.** `EHEALTH_TEST_DATABASE_URL` points the
+whole suite at PostgreSQL, one schema per test. Previously every claim about
+PostgreSQL rested on a SQLite run: 439 tests now pass against PostgreSQL 16,
+including the migration drift check, which reports zero differences against
+real reflected types.
+
+**A migration concurrency guard.** `alembic upgrade head` takes a PostgreSQL
+advisory lock and refuses a second migrator immediately rather than leaving it
+to block. A retried pipeline or a two-region rolling deploy starts two
+migrations by default; without the lock both run and the loser fails partway
+through. `EHEALTH_MIGRATION_LOCK_TIMEOUT` (default `5s`) bounds how long a
+migration waits for a table lock — the setting that separates a slow deploy
+from an outage, because every query queues behind a waiting `ALTER TABLE`.
+
+**CI** — lint, the suite on SQLite, the suite on PostgreSQL 16 with a bare
+`alembic upgrade head` run twice to prove a redeploy is a no-op, and a Docker
+build that is then started to check it runs as uid 10001 and carries the
+revision the pipeline stamped. The repository had no pipeline at all; "runs on
+PostgreSQL" and "the image builds" were true only as far as anyone had tried.
+
+**Lint and format are enforced**, with a ruff configuration covering bugbear
+and the bandit rules that matter here. The tree is now uniformly formatted;
+before this, 37 of 63 files were not.
+
+### Fixed
+
+- **A migration that silently did nothing.** Taking the advisory lock opened an
+  implicit transaction, which made alembic's own `begin_transaction()` nest
+  inside it — so the migration never committed while every command still
+  reported success, leaving an empty database. Caught by running the migration
+  tests against PostgreSQL, which is exactly the class of failure SQLite cannot
+  show. The lock and the timeouts are session-scoped, so committing before
+  handing over to alembic is safe.
+- **`docker compose up` could not start.** The app service waited only for the
+  database to be healthy, never for migrations, so the schema guard refused to
+  serve and the container restart-looped with an error that looked like an
+  application bug. A `migrate` service now runs to completion first.
+- **A `%` in the database URL broke the migration tests** — `alembic.ini` is
+  read by configparser, which treats `%` as interpolation. Any percent-encoded
+  URL or password containing `%` hit it, and the error named configparser
+  rather than the URL.
+- **A closure over a loop variable** in ledger verification (`fail()` in
+  `verify_chain`). Correct today because it is only called within its own
+  iteration, but a verification failure reporting the wrong sequence number
+  sends an auditor to the wrong record; the variables are now bound explicitly.
+- **`zip()` without `strict=`** in the CHE-UID check-digit calculation, where a
+  silently shortened sequence would compute a plausible but wrong check digit.
+
 ### Changed
 
 - `make release` names the full sequence including the ledger commit, and says
@@ -52,6 +100,12 @@ ledger; where it is absent the ledger stands alone.
   and what the ledger does *not* prove: it is a procedural record, not a
   cryptographic one. Signed commits and tags plus branch protection are what
   make it evidence against a hostile maintainer, and neither is enabled here.
+- `docs/migrations.md` replaces its "no PostgreSQL run, no zero-downtime
+  tooling" section with what now exists, and narrows what is still missing to
+  `CREATE INDEX CONCURRENTLY`, expand/contract enforcement, and an untested
+  restore path.
+- New: `make lint`, `make format`, `make test-postgres PGURL=…`.
+- `psycopg` moved into a `postgres` extra rather than being assumed present.
 
 ## [0.4.0] — 2026-08-09
 

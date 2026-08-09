@@ -38,7 +38,7 @@ _session_factory: sessionmaker[Session] | None = None
 
 def _configure_sqlite(engine: Engine) -> None:
     @event.listens_for(engine, "connect")
-    def _on_connect(dbapi_connection, _record):  # noqa: ANN001
+    def _on_connect(dbapi_connection, _record):
         cursor = dbapi_connection.cursor()
         # Foreign keys are off by default in SQLite; the audit and revision
         # tables depend on them holding.

@@ -234,7 +234,7 @@ class ConsentService:
         self,
         ledger: AuditLedger,
         tracker: ChangeTracker,
-        persons: "PersonService | None" = None,
+        persons: PersonService | None = None,
     ) -> None:
         self._ledger = ledger
         self._tracker = tracker
@@ -453,7 +453,7 @@ class AccessService:
         consents: ConsentService,
         ledger: AuditLedger,
         tracker: ChangeTracker,
-        persons: "PersonService",
+        persons: PersonService,
         *,
         capability_ttl_seconds: int = 600,
         visitor_ttl_seconds: int = 4 * 3600,
@@ -800,7 +800,9 @@ class AccessService:
                 session, actor, claims.jti, f"scope {required_scope.value} missing"
             )
         if dossier_uid is not None and claims.dossier_uid != dossier_uid:
-            self._reject(session, actor, claims.jti, "token is bound to another dossier")
+            self._reject(
+                session, actor, claims.jti, "token is bound to another dossier"
+            )
         if claims.dossier_uid is None:
             self._reject(session, actor, claims.jti, "token names no dossier")
 

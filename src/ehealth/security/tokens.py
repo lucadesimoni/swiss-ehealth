@@ -68,7 +68,7 @@ class Scope(StrEnum):
     ADMIN = "admin"
 
     @classmethod
-    def parse_all(cls, values: list[str]) -> list["Scope"]:
+    def parse_all(cls, values: list[str]) -> list[Scope]:
         out = []
         for value in values:
             try:
@@ -160,7 +160,7 @@ class TokenClaims:
         return payload
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "TokenClaims":
+    def from_payload(cls, payload: dict[str, Any]) -> TokenClaims:
         try:
             return cls(
                 jti=payload["jti"],
@@ -318,7 +318,9 @@ class TokenService:
         return b64u(sha256(public_key_b64.encode("ascii")))
 
     @staticmethod
-    def check_holder_binding(claims: TokenClaims, presented_key_b64: str | None) -> None:
+    def check_holder_binding(
+        claims: TokenClaims, presented_key_b64: str | None
+    ) -> None:
         """Enforce sender constraint when the token carries one.
 
         A token minted with ``cnf`` is useless without the matching key, which

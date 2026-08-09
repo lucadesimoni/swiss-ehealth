@@ -2,17 +2,28 @@
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Shared fixtures.
 
-Each test gets its own file-backed SQLite database and its own keyring, so
-tests cannot leak state into each other through either.
+Each test gets its own database and its own keyring, so tests cannot leak
+state into each other through either.
+
+By default that database is a file-backed SQLite one, which is fast and needs
+nothing installed. Set ``EHEALTH_TEST_DATABASE_URL`` to a PostgreSQL URL and
+the whole suite runs against PostgreSQL instead, one schema per test — see
+:func:`postgres_schema`. Production runs on PostgreSQL, and a suite that only
+ever exercises SQLite cannot see a JSONB mismatch, a stricter transactional
+rule, or a reserved word until a deployment does.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from ehealth.config import Environment, Settings
@@ -32,6 +43,10 @@ from ehealth.services.persons import CredentialRegistration, PersonRegistration
 
 ADMIN_KEY = "test-admin-key-that-is-long-enough-32ch"
 
+#: Point the suite at PostgreSQL, e.g.
+#: ``postgresql+psycopg://ehealth@localhost:5432/ehealth_test``.
+TEST_DATABASE_URL_ENV = "EHEALTH_TEST_DATABASE_URL"
+
 #: Valid AHVN13s (correct EAN-13 check digit) used across the suite.
 AHVN_ANNA = "756.1234.5678.97"
 AHVN_BEAT = "756.9217.0769.85"
@@ -39,11 +54,52 @@ AHVN_CARLA = "756.3047.5009.62"
 AHVN_DORA = "756.1111.1111.13"
 
 
+def postgres_url() -> str | None:
+    """The PostgreSQL URL the suite was asked to use, if any."""
+    url = os.environ.get(TEST_DATABASE_URL_ENV, "").strip()
+    return url or None
+
+
 @pytest.fixture
-def settings(tmp_path) -> Settings:
+def database_url(tmp_path) -> Iterator[str]:
+    """A private database for one test.
+
+    On SQLite that is a file in the test's own ``tmp_path``. On PostgreSQL it
+    is a schema created for this test and dropped afterwards: one database
+    with a schema per test is dramatically faster than a database per test,
+    and isolates just as well, because ``search_path`` makes the schema
+    invisible to everything else.
+    """
+    configured = postgres_url()
+    if configured is None:
+        yield f"sqlite+pysqlite:///{tmp_path / 'test.db'}"
+        return
+
+    schema = f"t_{uuid.uuid4().hex[:16]}"
+    admin = create_engine(configured, poolclass=None)
+    with admin.begin() as connection:
+        connection.execute(text(f'create schema "{schema}"'))
+
+    # -c search_path is what makes every unqualified table land in this
+    # test's schema without a single model needing to know about it.
+    scoped = make_url(configured).update_query_dict(
+        {"options": f"-csearch_path={schema}"}, append=True
+    )
+    try:
+        yield scoped.render_as_string(hide_password=False)
+    finally:
+        # A leaked schema would slowly turn the test database into a landfill,
+        # so the drop runs even when the test failed.
+        with admin.begin() as connection:
+            connection.execute(text(f'drop schema if exists "{schema}" cascade'))
+        admin.dispose()
+
+
+@pytest.fixture
+def settings(database_url: str) -> Settings:
     return Settings(
         environment=Environment.LOCAL,
-        database_url=f"sqlite+pysqlite:///{tmp_path / 'test.db'}",
+        database_url=database_url,
         issuer="https://test.dossier.ch",
         service_name="ch.ehealth.test",
         admin_api_key=ADMIN_KEY,
@@ -230,15 +286,17 @@ def login(
     state = started.json()["state"]
 
     # The mock provider stands in for the user authenticating at SwissID.
-    from ehealth.models.auth import OidcFlow
     from sqlalchemy import select
 
     from ehealth.db import get_session_factory
+    from ehealth.models.auth import OidcFlow
 
     with get_session_factory()() as session:
-        flow = session.execute(
-            select(OidcFlow).where(OidcFlow.state == state)
-        ).scalars().one()
+        flow = (
+            session.execute(select(OidcFlow).where(OidcFlow.state == state))
+            .scalars()
+            .one()
+        )
         nonce = flow.nonce
     code = mock_idp.authorize(subject, nonce)
 
@@ -326,9 +384,7 @@ def registry(client):
     )
     assert visitor.status_code == 201, visitor.text
 
-    dossier = client.post(
-        "/v1/dossiers", json={"patient_uid": patient.json()["uid"]}
-    )
+    dossier = client.post("/v1/dossiers", json={"patient_uid": patient.json()["uid"]})
     assert dossier.status_code == 201, dossier.text
 
     product = client.post(

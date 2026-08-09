@@ -20,8 +20,11 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import create_engine, inspect, text
 
+import ehealth.models  # noqa: F401  (registers every table)
 from ehealth.db import Base
 from ehealth.schema import (
+    MIGRATION_LOCK_KEY,
+    ConcurrentMigration,
     SchemaMismatch,
     read_schema_state,
     require_matching_schema,
@@ -29,31 +32,39 @@ from ehealth.schema import (
 )
 from ehealth.version import SCHEMA_VERSION
 
-import ehealth.models  # noqa: F401  (registers every table)
-
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
 def alembic_config(database_url: str) -> Config:
     config = Config(str(REPO / "alembic.ini"))
     config.set_main_option("script_location", str(REPO / "migrations"))
-    config.set_main_option("sqlalchemy.url", database_url)
+    # alembic.ini is read by configparser, which treats `%` as interpolation.
+    # Percent-encoded URLs and passwords containing `%` both hit this, and the
+    # error names configparser rather than the URL. `migrations/env.py` escapes
+    # the same way for the same reason.
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 
 
 @pytest.fixture
-def migrated_url(tmp_path, monkeypatch) -> str:
-    """An empty database brought up entirely by migrations."""
-    url = f"sqlite+pysqlite:///{tmp_path / 'migrated.db'}"
-    monkeypatch.setenv("EHEALTH_DATABASE_URL", url)
+def migrated_url(database_url, monkeypatch) -> str:
+    """An empty database brought up entirely by migrations.
+
+    Takes whichever backend the suite is configured for, so setting
+    ``EHEALTH_TEST_DATABASE_URL`` runs the migrations — and the drift check —
+    against PostgreSQL. SQLite is the convenient default; PostgreSQL is what
+    production uses, and only it can catch a JSONB mismatch or a type that
+    reflects back differently than it was declared.
+    """
+    monkeypatch.setenv("EHEALTH_DATABASE_URL", database_url)
     from ehealth.config import get_settings
 
     get_settings.cache_clear()
     try:
-        command.upgrade(alembic_config(url), "head")
+        command.upgrade(alembic_config(database_url), "head")
     finally:
         get_settings.cache_clear()
-    return url
+    return database_url
 
 
 class TestNoDrift:
@@ -157,6 +168,61 @@ class TestBootGuard:
         with engine.connect() as connection:
             rows = connection.execute(text("select count(*) from schema_metadata"))
             assert rows.scalar() == 1
+
+
+class TestConcurrencyGuard:
+    """Two deployers migrating at once is what a retried pipeline does by
+    default. Without the lock both run, and the loser fails partway through."""
+
+    @pytest.fixture
+    def postgres_connection(self, database_url):
+        if not database_url.startswith("postgresql"):
+            pytest.skip("advisory locks are a PostgreSQL feature")
+        engine = create_engine(database_url)
+        with engine.connect() as connection:
+            yield connection
+        engine.dispose()
+
+    def test_a_second_migrator_is_refused_rather_than_left_to_hang(
+        self, postgres_connection, database_url, monkeypatch
+    ):
+        """The holder is simulated with the same advisory lock the migration
+        takes, which is what a real concurrent `alembic upgrade` would hold."""
+        held = postgres_connection.exec_driver_sql(
+            f"select pg_try_advisory_lock({MIGRATION_LOCK_KEY})"
+        ).scalar()
+        assert held, "could not take the lock to set the test up"
+
+        monkeypatch.setenv("EHEALTH_DATABASE_URL", database_url)
+        from ehealth.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(ConcurrentMigration, match="another migration"):
+                command.upgrade(alembic_config(database_url), "head")
+        finally:
+            get_settings.cache_clear()
+            postgres_connection.exec_driver_sql(
+                f"select pg_advisory_unlock({MIGRATION_LOCK_KEY})"
+            )
+
+    def test_the_lock_is_released_so_the_next_migration_can_run(
+        self, migrated_url, database_url
+    ):
+        """A lock that outlived its migration would block every later deploy
+        until someone found and killed the session."""
+        if not database_url.startswith("postgresql"):
+            pytest.skip("advisory locks are a PostgreSQL feature")
+        engine = create_engine(database_url)
+        with engine.connect() as connection:
+            free = connection.exec_driver_sql(
+                f"select pg_try_advisory_lock({MIGRATION_LOCK_KEY})"
+            ).scalar()
+            connection.exec_driver_sql(
+                f"select pg_advisory_unlock({MIGRATION_LOCK_KEY})"
+            )
+        engine.dispose()
+        assert free, "the migration left its advisory lock held"
 
 
 class TestMigrationHygiene:

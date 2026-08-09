@@ -35,7 +35,9 @@ from ehealth.security.crypto import CryptoError, b64u, b64u_decode, sha256
 #: Signature algorithms we accept on an ID token. ``none`` is absent by
 #: construction, and symmetric algorithms are excluded so a leaked client
 #: secret cannot be used to forge tokens.
-ACCEPTED_ID_TOKEN_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "ES256", "ES384", "EdDSA"})
+ACCEPTED_ID_TOKEN_ALGORITHMS = frozenset(
+    {"RS256", "RS384", "RS512", "ES256", "ES384", "EdDSA"}
+)
 
 DEFAULT_CLOCK_SKEW = 60
 
@@ -125,7 +127,10 @@ class SwissIdClient:
                     "jwks_uri": self._config.jwks_uri,
                 }
             else:
-                url = self._config.issuer.rstrip("/") + "/.well-known/openid-configuration"
+                url = (
+                    self._config.issuer.rstrip("/")
+                    + "/.well-known/openid-configuration"
+                )
                 response = self._http.get(url)
                 response.raise_for_status()
                 document = response.json()
@@ -284,7 +289,9 @@ def _jwk_to_public_key(jwk: dict[str, Any]) -> Any:
     raise OidcError(f"unsupported key type {kty!r}")
 
 
-def _verify_jws(key: Any, algorithm: str, signing_input: bytes, signature: bytes) -> bool:
+def _verify_jws(
+    key: Any, algorithm: str, signing_input: bytes, signature: bytes
+) -> bool:
     digests = {"256": hashes.SHA256(), "384": hashes.SHA384(), "512": hashes.SHA512()}
     try:
         if algorithm.startswith("RS"):
@@ -321,7 +328,9 @@ class MockIdentityProvider:
     credentials for a real provider.
     """
 
-    def __init__(self, *, issuer: str = "https://mock-idp.local", production: bool = False) -> None:
+    def __init__(
+        self, *, issuer: str = "https://mock-idp.local", production: bool = False
+    ) -> None:
         if production:
             raise OidcError("the mock identity provider must not run in production")
         self._issuer = issuer

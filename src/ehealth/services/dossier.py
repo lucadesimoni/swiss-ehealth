@@ -59,7 +59,7 @@ class DossierService:
         self,
         ledger: AuditLedger,
         tracker: ChangeTracker,
-        persons: "PersonService | None" = None,
+        persons: PersonService | None = None,
         *,
         retention_years: int = 20,
     ) -> None:
@@ -190,7 +190,9 @@ class DossierService:
         if document.supersedes_uid:
             previous = session.get(DossierDocument, document.supersedes_uid)
             if previous is None or previous.dossier_uid != dossier.uid:
-                raise DossierError("superseded document does not belong to this dossier")
+                raise DossierError(
+                    "superseded document does not belong to this dossier"
+                )
             previous_before = snapshot(previous)
             previous.status = DocumentStatus.SUPERSEDED.value
             self._tracker.record_update(

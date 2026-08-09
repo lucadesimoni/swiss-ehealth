@@ -102,7 +102,9 @@ class TestTampering:
     def test_rejects_the_none_algorithm(self, tokens):
         token = tokens.issue(make_claims())
         _, payload, _ = token.split(".")
-        header = b64u(canonical_json({"alg": "none", "kid": "token-signing.v1", "typ": "CAP"}))
+        header = b64u(
+            canonical_json({"alg": "none", "kid": "token-signing.v1", "typ": "CAP"})
+        )
         with pytest.raises(TokenError, match="unsupported signature algorithm"):
             tokens.verify(f"{header}.{payload}.")
 
@@ -111,7 +113,9 @@ class TestTampering:
         closed rather than fall back to Ed25519."""
         _, payload, signature = tokens.issue(make_claims()).split(".")
         header = b64u(
-            canonical_json({"alg": "ML-DSA-65", "kid": "token-signing.v1", "typ": "CAP"})
+            canonical_json(
+                {"alg": "ML-DSA-65", "kid": "token-signing.v1", "typ": "CAP"}
+            )
         )
         with pytest.raises(TokenError, match="unsupported signature algorithm"):
             tokens.verify(f"{header}.{payload}.{signature}")
@@ -122,9 +126,7 @@ class TestTampering:
 
         audit_signer = keyring.signer(KeyPurpose.AUDIT_LEDGER)
         header = b64u(
-            canonical_json(
-                {"alg": "Ed25519", "kid": audit_signer.kid, "typ": "CAP"}
-            )
+            canonical_json({"alg": "Ed25519", "kid": audit_signer.kid, "typ": "CAP"})
         )
         payload = b64u(canonical_json(make_claims().to_payload()))
         signature = audit_signer.sign(f"{header}.{payload}".encode("ascii"))
@@ -168,7 +170,9 @@ class TestTimeAndBinding:
         )
         now = datetime.now(UTC)
         with pytest.raises(TokenError, match="exceeds"):
-            service.issue(make_claims(issued_at=now, expires_at=now + timedelta(hours=2)))
+            service.issue(
+                make_claims(issued_at=now, expires_at=now + timedelta(hours=2))
+            )
 
     def test_rejects_a_wrong_audience(self, tokens):
         """Audience binding stops a token minted for one service being

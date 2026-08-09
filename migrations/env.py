@@ -12,19 +12,17 @@ from __future__ import annotations
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from ehealth.config import get_settings
-from ehealth.db import Base
-
 # Importing the package registers every table on the metadata; without it
 # autogenerate would cheerfully propose dropping tables it cannot see.
 import ehealth.models  # noqa: F401
+from ehealth.config import get_settings
+from ehealth.db import Base
+from ehealth.schema import guard_migration
 
 config = context.config
 target_metadata = Base.metadata
 
-config.set_main_option(
-    "sqlalchemy.url", get_settings().database_url.replace("%", "%%")
-)
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 
 def _include_object(obj, name, type_, reflected, compare_to) -> bool:
@@ -80,6 +78,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        guard_migration(connection)
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

@@ -35,9 +35,7 @@ from ehealth.services.medication import (
 
 router = APIRouter(tags=["medication"])
 
-MedRead = Annotated[
-    AuthorizedAccess, Depends(capability_access(Scope.MEDICATION_READ))
-]
+MedRead = Annotated[AuthorizedAccess, Depends(capability_access(Scope.MEDICATION_READ))]
 MedWrite = Annotated[
     AuthorizedAccess, Depends(capability_access(Scope.MEDICATION_WRITE))
 ]
@@ -182,7 +180,9 @@ def reconciled_medications(
     """The current medication list a clinician should act on."""
     if access.dossier_uid != dossier_uid:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-    return [_statement_out(row) for row in container.medications.reconciled_list(db, access)]
+    return [
+        _statement_out(row) for row in container.medications.reconciled_list(db, access)
+    ]
 
 
 @router.post(

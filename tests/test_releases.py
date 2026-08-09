@@ -222,7 +222,7 @@ class TestInvariants:
             parse_manifest(self.manifest(self.entry(commit="abc1234")))
 
     def test_a_mismatched_tag_is_rejected(self):
-        with pytest.raises(ManifestError, match="expected 'v1.0.0'"):
+        with pytest.raises(ManifestError, match=r"expected 'v1\.0\.0'"):
             parse_manifest(self.manifest(self.entry(tag="release-1")))
 
     def test_a_repeated_version_is_rejected(self):
@@ -297,7 +297,7 @@ class TestInvariants:
             parse_manifest(json.dumps({"manifest_version": 1, "releases": []}))
 
     def test_a_malformed_version_is_rejected(self):
-        with pytest.raises(ManifestError, match="MAJOR.MINOR.PATCH"):
+        with pytest.raises(ManifestError, match=r"MAJOR\.MINOR\.PATCH"):
             version_key("1.0")
 
 

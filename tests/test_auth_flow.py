@@ -11,7 +11,6 @@ from ehealth.models.audit import AuditEvent
 from ehealth.models.auth import AuthSession, OidcFlow, OtpChallenge, SessionState
 from ehealth.models.governance import IssuedToken
 from ehealth.services.auth import mask_email
-
 from tests.conftest import login
 
 EMAIL = "anna.muster@example.ch"
@@ -24,9 +23,11 @@ def start_and_callback(client, mock_idp, *, subject=SUBJECT):
     from ehealth.db import get_session_factory
 
     with get_session_factory()() as session:
-        flow = session.execute(
-            select(OidcFlow).where(OidcFlow.state == state)
-        ).scalars().one()
+        flow = (
+            session.execute(select(OidcFlow).where(OidcFlow.state == state))
+            .scalars()
+            .one()
+        )
         nonce = flow.nonce
     code = mock_idp.authorize(subject, nonce)
     return state, code
@@ -131,9 +132,7 @@ class TestSecondFactorIsMandatory:
         from ehealth.db import get_session_factory
 
         with get_session_factory()() as db:
-            assert (
-                db.get(AuthSession, pending).state == SessionState.PENDING_MFA.value
-            )
+            assert db.get(AuthSession, pending).state == SessionState.PENDING_MFA.value
             tokens = db.execute(select(IssuedToken)).scalars().all()
             assert tokens == []
 
@@ -206,7 +205,12 @@ class TestFlowIntegrity:
         )
         mock_idp.enrol(SUBJECT, email=EMAIL)
         state, code = start_and_callback(client, mock_idp)
-        assert client.post("/v1/auth/callback", json={"state": state, "code": code}).status_code == 200
+        assert (
+            client.post(
+                "/v1/auth/callback", json={"state": state, "code": code}
+            ).status_code
+            == 200
+        )
         replay = client.post("/v1/auth/callback", json={"state": state, "code": code})
         assert replay.status_code == 401
 
@@ -235,9 +239,13 @@ class TestFlowIntegrity:
         from ehealth.db import get_session_factory
 
         with get_session_factory()() as db:
-            failures = db.execute(
-                select(AuditEvent).where(AuditEvent.action == "auth.login_failed")
-            ).scalars().all()
+            failures = (
+                db.execute(
+                    select(AuditEvent).where(AuditEvent.action == "auth.login_failed")
+                )
+                .scalars()
+                .all()
+            )
             assert len(failures) == 1
             assert failures[0].outcome == "denied"
 
@@ -321,13 +329,19 @@ class TestSessionLifecycle:
 
         # The tokens issued by the legitimate rotation are dead too.
         after = client.get(
-            "/v1/persons/me", headers={"Authorization": f"Bearer {rotated['access_token']}"}
+            "/v1/persons/me",
+            headers={"Authorization": f"Bearer {rotated['access_token']}"},
         )
         assert after.status_code == 401
 
     def test_logout_revokes_everything(self, client, session):
-        assert client.post("/v1/auth/logout", headers=session.auth_header).status_code == 204
-        assert client.get("/v1/persons/me", headers=session.auth_header).status_code == 401
+        assert (
+            client.post("/v1/auth/logout", headers=session.auth_header).status_code
+            == 204
+        )
+        assert (
+            client.get("/v1/persons/me", headers=session.auth_header).status_code == 401
+        )
         assert (
             client.post(
                 "/v1/auth/refresh", json={"refresh_token": session.refresh_token}

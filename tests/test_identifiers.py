@@ -37,7 +37,9 @@ class TestUlid:
         assert early < late
 
     def test_roundtrips_its_timestamp(self):
-        assert ulid_timestamp_ms(new_ulid(now_ms=1_700_000_000_123)) == 1_700_000_000_123
+        assert (
+            ulid_timestamp_ms(new_ulid(now_ms=1_700_000_000_123)) == 1_700_000_000_123
+        )
 
     def test_is_unique_across_many_draws(self):
         # Same millisecond, 80 bits of randomness: collisions must not happen.
@@ -115,7 +117,9 @@ class TestAhvn13:
 
 
 class TestCheUid:
-    @pytest.mark.parametrize("value", ["CHE-109.322.551", "CHE109322551", "che-105.805.649"])
+    @pytest.mark.parametrize(
+        "value", ["CHE-109.322.551", "CHE109322551", "che-105.805.649"]
+    )
     def test_accepts_valid(self, value):
         assert CheUid.is_valid(value)
 

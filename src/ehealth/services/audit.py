@@ -36,9 +36,9 @@ outside the operator's control.
 from __future__ import annotations
 
 import binascii
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -96,7 +96,7 @@ class ActorContext:
     user_agent: str | None = None
 
     @classmethod
-    def system(cls, request_id: str | None = None) -> "ActorContext":
+    def system(cls, request_id: str | None = None) -> ActorContext:
         return cls(actor_uid=None, actor_kind="system", request_id=request_id)
 
 
@@ -202,7 +202,8 @@ def merkle_leaf(chain_id: str, head_hash: str, last_seq: int) -> bytes:
     subtree — the classic second-preimage attack on naive Merkle trees.
     """
     return sha256(
-        _LEAF_PREFIX + canonical_json(
+        _LEAF_PREFIX
+        + canonical_json(
             {"chain_id": chain_id, "head_hash": head_hash, "last_seq": last_seq}
         )
     )
@@ -445,7 +446,12 @@ class AuditLedger:
 
         expected_seq = events[0].seq
         for index, event in enumerate(events):
-            def fail(reason: str) -> ChainVerification:
+            # Bound as defaults rather than closed over: a closure would read
+            # whatever the loop variables hold when it is *called*, which is
+            # correct only as long as every call stays inside this iteration.
+            # A verification failure reporting the wrong sequence number would
+            # send an auditor to the wrong record.
+            def fail(reason: str, index: int = index, event=event) -> ChainVerification:
                 return ChainVerification(
                     ok=False,
                     checked=index,
@@ -487,9 +493,7 @@ class AuditLedger:
             expected_prev = event.entry_hash
             expected_seq += 1
 
-        return ChainVerification(
-            ok=True, checked=len(events), chain_id=chain_id
-        )
+        return ChainVerification(ok=True, checked=len(events), chain_id=chain_id)
 
     def verify_all(
         self, session: Session, *, max_chains: int | None = None
@@ -528,7 +532,7 @@ class AuditLedger:
             return False
         try:
             signer = self._signer(version)
-        except Exception:  # noqa: BLE001 - unknown key version
+        except Exception:
             return False
         return signer.verify(bytes.fromhex(event.entry_hash), event.signature)
 

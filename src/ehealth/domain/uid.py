@@ -120,20 +120,20 @@ class Uid:
             raise IdentifierError("UID body must be a 26 character ULID")
 
     @classmethod
-    def generate(cls, prefix: str) -> "Uid":
+    def generate(cls, prefix: str) -> Uid:
         if prefix not in UID_PREFIXES:
             raise IdentifierError(f"unknown UID prefix {prefix!r}")
         return cls(prefix, new_ulid())
 
     @classmethod
-    def parse(cls, raw: str) -> "Uid":
+    def parse(cls, raw: str) -> Uid:
         match = _UID_RE.match(raw or "")
         if not match:
             raise IdentifierError(f"malformed UID {raw!r}")
         return cls(match.group(1), match.group(2))
 
     @classmethod
-    def parse_typed(cls, raw: str, prefix: str) -> "Uid":
+    def parse_typed(cls, raw: str, prefix: str) -> Uid:
         """Parse and assert the entity type, so a visitor UID can never be
         passed where a patient UID is expected."""
         uid = cls.parse(raw)
@@ -185,7 +185,7 @@ class Ahvn13:
             raise IdentifierError("AHVN13 must be 13 digits")
 
     @classmethod
-    def parse(cls, raw: str) -> "Ahvn13":
+    def parse(cls, raw: str) -> Ahvn13:
         raw = (raw or "").strip()
         if not _AHVN13_RE.match(raw):
             raise IdentifierError("AHVN13 must look like 756.XXXX.XXXX.XX")
@@ -334,12 +334,17 @@ class CheUid:
     digits: str
 
     @classmethod
-    def parse(cls, raw: str) -> "CheUid":
+    def parse(cls, raw: str) -> CheUid:
         match = _CHE_RE.match((raw or "").strip())
         if not match:
             raise IdentifierError("CHE UID must look like CHE-123.456.789")
         digits = "".join(match.groups())
-        remainder = sum(int(d) * w for d, w in zip(digits[:8], _CHE_WEIGHTS)) % 11
+        # strict=True: the regex guarantees eight digits today, and if that
+        # ever changes silently, a short zip would compute a plausible but
+        # wrong check digit rather than raise.
+        remainder = (
+            sum(int(d) * w for d, w in zip(digits[:8], _CHE_WEIGHTS, strict=True)) % 11
+        )
         check = 0 if remainder == 0 else 11 - remainder
         if check == 10:
             raise IdentifierError("CHE UID check digit cannot be 10")
