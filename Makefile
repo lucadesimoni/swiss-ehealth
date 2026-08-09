@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 .PHONY: install test test-verbose run seed keygen clean version verify-version release \
-        migrate migration migrate-status
+        record-release releases migrate migration migrate-status
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -58,14 +58,28 @@ version:
 	@$(PY) -c "import json; from ehealth.version import release_identity; \
 	print(json.dumps(release_identity().as_dict(), indent=2))"
 
-## Version numbers agree across version.py, pyproject.toml and CHANGELOG.md.
+## Version numbers agree across version.py, pyproject.toml and CHANGELOG.md,
+## and every entry in RELEASES.json still matches the commit it names.
 verify-version:
-	@$(PY) -m pytest tests/test_versioning.py -q
+	@$(PY) -m pytest tests/test_versioning.py tests/test_releases.py -q
 
-## Cut a release: make release VERSION=0.2.0
+## Print the release ledger: version, commit and compatibility numbers.
+releases:
+	@$(PY) -c "from ehealth.releases import load_manifest; \
+	print(f'{\"version\":9} {\"commit\":8} {\"date\":11} api  schema  payload'); \
+	[print(f'{r.version:9} {r.short_commit:8} {r.date:11} {r.api_version:4} \
+	{r.schema_version:^6}  {r.audit_payload_version:^7}') for r in load_manifest()]"
+
+## Append the current commit to RELEASES.json. Run straight after the release
+## commit exists, so the recorded SHA is the release itself and not the commit
+## that records it — you cannot know a commit's hash before you have made it.
+record-release:
+	$(PY) -m ehealth.scripts.record_release
+
+## Cut a release: make release VERSION=0.5.0
 ##
 ## Refuses on a dirty tree, a version mismatch, a missing CHANGELOG section or
-## an existing tag — a tag, once pushed, is a claim that must stay true.
+## an existing tag — a tag, once published, is a claim that must stay true.
 release: verify-version
 	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { \
@@ -77,9 +91,22 @@ release: verify-version
 	  echo "CHANGELOG.md has no section for $(VERSION)"; exit 1; }
 	@! git rev-parse "v$(VERSION)" >/dev/null 2>&1 || { \
 	  echo "tag v$(VERSION) already exists; tags are never moved"; exit 1; }
+	@$(PY) -c "from ehealth.releases import find_release; import sys; \
+	sys.exit(0 if find_release('$(VERSION)') is None else 1)" || { \
+	  echo "RELEASES.json already records $(VERSION); the ledger is append-only"; \
+	  exit 1; }
 	$(PY) -m pytest -q
 	git tag -a "v$(VERSION)" -m "swiss-ehealth $(VERSION)"
-	@echo "tagged v$(VERSION) — push with: git push origin main --follow-tags"
+	@echo
+	@echo "tagged v$(VERSION) at $$(git rev-parse --short HEAD). Now:"
+	@echo "  make record-release"
+	@echo "  git commit -m 'Record release $(VERSION) in the ledger' RELEASES.json"
+	@echo "  git push -u origin main"
+	@echo "  git push origin v$(VERSION)"
+	@echo
+	@echo "The tag push is the one step that can be refused by a restricted"
+	@echo "network or a protected-ref rule. RELEASES.json is an ordinary file"
+	@echo "in the tree, so the release stays recorded either way."
 
 clean:
 	rm -rf .pytest_cache **/__pycache__ ehealth.db ehealth.db-wal ehealth.db-shm \

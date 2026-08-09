@@ -19,6 +19,40 @@ the diff:
 
 ## [Unreleased]
 
+### Added
+
+**The release ledger** — `RELEASES.json` records, for every released version,
+the commit it was cut from and the four compatibility numbers that commit
+declared. Until now that binding existed only as an annotated tag, and a tag is
+a mutable pointer beside the history rather than in it: protected-ref rules and
+restricted egress routinely accept `refs/heads/*` and refuse `refs/tags/*`, and
+a clone that arrives without tags then cannot say which commit was released.
+The ledger is an ordinary file in the tree, so every clone carries it.
+
+Entries are checked against the repository rather than merely parsed: the suite
+reads `src/ehealth/version.py` at each recorded commit and requires it to
+declare exactly the numbers claimed, so an invented, mistyped or stale SHA
+fails. Verified against real tampering — pointing an entry at an unrelated real
+commit makes it fail with the discrepancy named.
+
+Parse-time invariants refuse an abbreviated SHA, a repeated version, two
+versions sharing a commit, out-of-order entries, and a schema or audit-payload
+version that goes backwards. Where a tag is present it must agree with the
+ledger; where it is absent the ledger stands alone.
+
+- `make releases` prints the ledger.
+- `make record-release` appends the current commit.
+- `make verify-version` now covers the ledger as well as the three files.
+
+### Changed
+
+- `make release` names the full sequence including the ledger commit, and says
+  plainly that the tag push is the one step a restricted network can refuse.
+- `docs/versioning.md` documents the ledger, the two-commit release procedure,
+  and what the ledger does *not* prove: it is a procedural record, not a
+  cryptographic one. Signed commits and tags plus branch protection are what
+  make it evidence against a hostile maintainer, and neither is enabled here.
+
 ## [0.4.0] — 2026-08-09
 
 Closes the gap that made everything before it undeployable: there was no way to

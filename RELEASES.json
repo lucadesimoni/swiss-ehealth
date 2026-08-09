@@ -1,0 +1,42 @@
+{
+  "$schema_note": "The release ledger. See docs/versioning.md. Append-only: an entry, once committed, is never edited or removed. Each entry is checked against the repository by tests/test_releases.py, which reads src/ehealth/version.py at the recorded commit and requires it to declare exactly these numbers.",
+  "manifest_version": 1,
+  "releases": [
+    {
+      "version": "0.1.0",
+      "commit": "dc8d95770e7e64d7d53da13d05a31744624419ca",
+      "tag": "v0.1.0",
+      "date": "2026-08-07",
+      "api_version": "v1",
+      "schema_version": 1,
+      "audit_payload_version": 1
+    },
+    {
+      "version": "0.2.0",
+      "commit": "5539215386045f70e3a013d8dade88ec25dfb15a",
+      "tag": "v0.2.0",
+      "date": "2026-08-07",
+      "api_version": "v1",
+      "schema_version": 2,
+      "audit_payload_version": 1
+    },
+    {
+      "version": "0.3.0",
+      "commit": "d2b47e825a3dd1f54101a41ba511f6a4d9bb93de",
+      "tag": "v0.3.0",
+      "date": "2026-08-07",
+      "api_version": "v1",
+      "schema_version": 3,
+      "audit_payload_version": 2
+    },
+    {
+      "version": "0.4.0",
+      "commit": "8670e937a7af5bc9cb4936a205844477f6b81b4c",
+      "tag": "v0.4.0",
+      "date": "2026-08-09",
+      "api_version": "v1",
+      "schema_version": 4,
+      "audit_payload_version": 2
+    }
+  ]
+}

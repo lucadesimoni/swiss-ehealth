@@ -288,6 +288,15 @@ any commit. The signed payload layout is versioned with a builder per version
 that is never edited after release; a build meeting a payload version it does
 not know reports a named failure rather than declaring the entry sound.
 
+Which commit each release was cut from is recorded in
+[`RELEASES.json`](RELEASES.json), not only in a git tag. A tag is a mutable
+pointer beside the history that a protected-ref rule or a restricted network
+can refuse to accept; the ledger is a file inside the tree that every clone
+carries. Entries are verified against the repository — the suite reads
+`version.py` at each recorded commit and requires it to declare exactly the
+numbers claimed — so a mistyped or invented SHA fails rather than misleading an
+auditor later. `make releases` prints it.
+
 Full policy and release procedure in [`docs/versioning.md`](docs/versioning.md);
 history in [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -295,13 +304,15 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 411 tests
+make test        # 437 tests
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
 
 make version         # release identity of this checkout
-make verify-version  # version numbers agree across the three files
-make release VERSION=0.4.0
+make releases        # the release ledger: version, commit, compatibility numbers
+make verify-version  # the numbers agree, and every ledger entry matches its commit
+make release VERSION=0.5.0
+make record-release  # append the release commit to RELEASES.json
 
 make migrate         # bring the database to the latest migration
 make migration name="add allergy table"
