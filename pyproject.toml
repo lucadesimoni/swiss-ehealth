@@ -72,6 +72,11 @@ ignore = [
 "tests/test_releases.py" = ["S603", "S607"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "." is not redundant. Several test modules import shared constants from
+# `tests.conftest`, which resolves only when the repository root is on the
+# path. `python -m pytest` puts it there implicitly and a bare `pytest` does
+# not, so without this the suite passes through `make test` and fails for
+# anyone — CI included — who runs pytest directly.
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 filterwarnings = ["error::DeprecationWarning:ehealth.*"]

@@ -81,6 +81,11 @@ before this, 37 of 63 files were not.
   database to be healthy, never for migrations, so the schema guard refused to
   serve and the container restart-looped with an error that looked like an
   application bug. A `migrate` service now runs to completion first.
+- **The suite only ran under `python -m pytest`.** Five test modules import
+  shared constants from `tests.conftest`, which resolves only when the
+  repository root is on the path — `python -m pytest` puts it there implicitly,
+  a bare `pytest` does not. It passed through `make test` and failed for
+  anyone invoking pytest directly. Found by CI on its first run.
 - **A `%` in the database URL broke the migration tests** — `alembic.ini` is
   read by configparser, which treats `%` as interpolation. Any percent-encoded
   URL or password containing `%` hit it, and the error named configparser
