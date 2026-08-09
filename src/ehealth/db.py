@@ -74,10 +74,21 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def create_all() -> None:
+    """Build the schema directly from the models. Development only.
+
+    Production goes through migrations; this exists so a checkout and the test
+    suite need no migration step. It stamps the schema version so the boot
+    guard sees a consistent database either way.
+    """
     # Importing the package registers every table on the metadata.
     import ehealth.models  # noqa: F401
+    from ehealth.schema import stamp_schema_version
+    from ehealth.version import version_label
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        stamp_schema_version(connection, applied_by=version_label())
 
 
 @contextmanager

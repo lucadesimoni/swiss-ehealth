@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Importing this package registers every table on the metadata."""
 
+from ehealth.schema import SchemaMetadata
+
 from ehealth.models.audit import (
     AuditAction,
     AuditEvent,
@@ -61,6 +63,7 @@ from ehealth.models.governance import (
 
 __all__ = [
     "CANTONS",
+    "SchemaMetadata",
     "PRESCRIBING_PROFESSIONS",
     "AccessGrant",
     "AccountStatus",

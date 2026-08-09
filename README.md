@@ -295,14 +295,27 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 399 tests
+make test        # 411 tests
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
 
 make version         # release identity of this checkout
 make verify-version  # version numbers agree across the three files
-make release VERSION=0.3.0
+make release VERSION=0.4.0
+
+make migrate         # bring the database to the latest migration
+make migration name="add allergy table"
 ```
+
+Schema changes go through Alembic, and the application **refuses to start**
+against a schema it does not expect — in both directions. A database newer than
+the build is the dangerous one people forget: the old code does not know about
+columns the new schema requires, so writing through it can drop data silently.
+
+A drift test runs the migrations on an empty database and asks alembic whether
+the result differs from the models. Without it drift is invisible, because the
+test suite builds its schema with `create_all` and production never does.
+See [`docs/migrations.md`](docs/migrations.md).
 
 ## Deploying on Swiss infrastructure
 
@@ -380,8 +393,6 @@ Stated plainly so nobody mistakes a stub for a feature:
 - **Document storage.** `DossierDocument` records the SHA-256 and a storage
   reference; the blob itself belongs in object storage. The hash is what makes
   that storage untrusted-by-default.
-- **Schema migrations.** `create_all` covers development. Production needs
-  Alembic; the constraint naming convention in `db.py` is already set up for it.
 - **The IHE/XDS profiles** (XDS.b, PIX/PDQ, CH:ATC) that a real EPD community
   must speak to federate with other communities. The internal model is shaped
   to map onto them — document class, confidentiality codes, home community —

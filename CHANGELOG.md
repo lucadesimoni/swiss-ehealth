@@ -12,11 +12,62 @@ the diff:
 
 | | API | DB schema | Audit payload |
 |---|---|---|---|
+| 0.4.0 | v1 | 4 | 2 |
 | 0.3.0 | v1 | 3 | 2 |
 | 0.2.0 | v1 | 2 | 1 |
 | 0.1.0 | v1 | 1 | 1 |
 
 ## [Unreleased]
+
+## [0.4.0] — 2026-08-09
+
+Closes the gap that made everything before it undeployable: there was no way to
+change the schema of a database that already held data. API `v1`, DB schema
+`4`, audit payload `2`.
+
+### Added
+
+**Migrations**
+- Alembic, wired to the application's own settings so the connection string
+  lives in exactly one place and there is no way to migrate one database while
+  the application talks to another.
+- An initial migration covering all 20 tables. It refuses to downgrade:
+  dropping every table is not a rollback, it is data loss with extra steps.
+- `make migrate`, `make migrate-status`, `make migration name="…"`.
+- Custom column types render by name in migrations (`ehealth.models.base.JsonType`)
+  rather than as an inlined expression needing three more imports.
+
+**The drift test** — `tests/test_migrations.py::TestNoDrift` runs the
+migrations on an empty database and asks alembic whether the result differs
+from the models. Without it drift is silent: the suite builds its schema with
+`create_all`, so a model change with no migration passes every test and only
+breaks in production, where `create_all` never runs. Verified against real
+drift — adding an undeclared model column makes it fail.
+
+**The boot guard** — a new `schema_metadata` table records the schema version
+and the build that applied it, and the application refuses to start against a
+schema it does not expect, in **both** directions:
+- database older than the code: migrations have not been run;
+- database *newer* than the code: a rollback that skipped its migration. This
+  is the direction people forget, and the dangerous one — the old build does
+  not know about columns the new schema requires, so writing through it can
+  drop data silently.
+
+`create_all` stamps the version too, so the development path leaves a database
+the guard accepts.
+
+### Notes for existing deployments
+
+A database created by 0.3.0 has no `alembic_version` and no `schema_metadata`.
+Verify its shape matches the models, then `alembic stamp head` and add the
+`schema_metadata` row before starting 0.4.0 — or, for a pre-production
+deployment, recreate it.
+
+**Not verified:** the migration was generated and applied on SQLite only.
+Verify against PostgreSQL before production. There is also no zero-downtime
+tooling yet — no advisory lock against two migrators racing, no statement
+timeout, no `CREATE INDEX CONCURRENTLY`. See
+[`docs/migrations.md`](docs/migrations.md).
 
 ## [0.3.0] — 2026-08-07
 
@@ -250,7 +301,8 @@ First release. API `v1`, DB schema `1`, audit payload `1`.
 - Released under AGPL-3.0-or-later. See [`docs/licensing.md`](docs/licensing.md)
   for the reasoning; the repository previously carried GPL-3.0.
 
-[Unreleased]: https://github.com/lucadesimoni/swiss-ehealth/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/lucadesimoni/swiss-ehealth/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.4.0
 [0.3.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.3.0
 [0.2.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.2.0
 [0.1.0]: https://github.com/lucadesimoni/swiss-ehealth/releases/tag/v0.1.0

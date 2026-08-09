@@ -32,6 +32,7 @@ from ehealth.config import Environment, Settings, get_settings
 from ehealth.container import Container, build_container, get_container
 from ehealth.db import create_all, init_engine
 from ehealth.domain.uid import new_uid
+from ehealth.schema import require_matching_schema
 from ehealth.services.access import AccessError
 from ehealth.services.auth import AuthError
 from ehealth.version import API_VERSION
@@ -120,10 +121,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        init_engine(settings)
+        engine = init_engine(settings)
         if not production:
             # Production schema changes go through migrations, not create_all.
             create_all()
+        # Refuse to serve a database this build does not expect — in either
+        # direction. Running old code against a newer schema can silently drop
+        # data, and running new code against an older one fails mid-write.
+        require_matching_schema(engine)
         app.state.container = container or (
             get_container() if settings is get_settings() else build_container(settings)
         )

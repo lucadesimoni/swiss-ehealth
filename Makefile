@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-.PHONY: install test test-verbose run seed keygen clean version verify-version release
+.PHONY: install test test-verbose run seed keygen clean version verify-version release \
+        migrate migration migrate-status
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -29,6 +30,28 @@ seed:
 
 keygen:
 	@$(PY) -c "from ehealth.config import generate_root_key; print(generate_root_key())"
+
+## Bring the database up to the latest migration.
+migrate:
+	$(VENV)/bin/alembic upgrade head
+
+## Show where the database is versus the migrations.
+migrate-status:
+	@$(VENV)/bin/alembic current
+	@$(VENV)/bin/alembic heads
+
+## Generate a migration from model changes:
+##   make migration name="add allergy table"
+##
+## Always read what it produced. Autogenerate does not see data migrations,
+## renames (it emits drop+add, which loses the data), or anything outside the
+## table definitions.
+migration:
+	@test -n "$(name)" || { echo 'usage: make migration name="what changed"'; exit 1; }
+	$(VENV)/bin/alembic revision --autogenerate -m "$(name)"
+	@echo
+	@echo "Now: read the generated file, bump SCHEMA_VERSION in src/ehealth/version.py,"
+	@echo "and call stamp_schema_version() at the end of its upgrade()."
 
 ## Print the release identity of this checkout, exactly as /version reports it.
 version:
