@@ -12,12 +12,19 @@ the diff:
 
 | | API | DB schema | Audit payload |
 |---|---|---|---|
+| 0.5.0 | v1 | 4 | 2 |
 | 0.4.0 | v1 | 4 | 2 |
 | 0.3.0 | v1 | 3 | 2 |
 | 0.2.0 | v1 | 2 | 1 |
 | 0.1.0 | v1 | 1 | 1 |
 
 ## [Unreleased]
+
+## [0.5.0] — 2026-08-10
+
+Nothing in this release changes the database schema, the API or the signed
+audit payload. It changes what is *checked* — several things this
+repository asserted were true had never been run.
 
 ### Added
 

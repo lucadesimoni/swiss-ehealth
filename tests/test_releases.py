@@ -168,11 +168,15 @@ class TestLedgerMatchesTheCode:
             )
             assert row in changelog, f"missing compatibility row: {row}"
 
-    def test_the_schema_version_of_the_newest_release_is_migratable(self):
-        """Every schema version in the ledger must be reachable by migrating,
-        or an old deployment has no upgrade path to it."""
-        versions = sorted(release.schema_version for release in load_manifest())
-        assert versions == list(range(versions[0], versions[0] + len(versions))), (
+    def test_schema_versions_form_an_unbroken_run(self):
+        """No gaps, or some deployment has no upgrade path to the next version.
+
+        Compared as a *set*: most releases change no schema at all, and several
+        consecutive releases sharing one schema version is the normal case, not
+        a fault.
+        """
+        versions = sorted({release.schema_version for release in load_manifest()})
+        assert versions == list(range(versions[0], versions[-1] + 1)), (
             f"schema versions skip a number: {versions}"
         )
 
@@ -255,6 +259,18 @@ class TestInvariants:
                     ),
                 )
             )
+
+    def test_consecutive_releases_may_share_a_schema_version(self):
+        """The common case: a release that changes no schema at all."""
+        parsed = parse_manifest(
+            self.manifest(
+                self.entry(schema_version=4),
+                self.entry(
+                    version="1.0.1", tag="v1.0.1", commit="b" * 40, schema_version=4
+                ),
+            )
+        )
+        assert [release.schema_version for release in parsed] == [4, 4]
 
     def test_an_audit_payload_version_may_not_go_backwards(self):
         """A payload builder is never withdrawn, so its version never falls."""
