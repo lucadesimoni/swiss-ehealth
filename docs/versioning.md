@@ -239,9 +239,21 @@ git push origin v0.5.0
 
 Two commits, deliberately. The tag and the ledger entry both name the *release*
 commit, and a commit's hash cannot be known before the commit exists — so the
-entry that records it necessarily lands one commit later. `git describe` on
-`main` then reads `v0.5.0-1-g…`, which is correct: main is one commit past the
-release.
+entry that records it necessarily lands one commit later. `git describe
+--match 'v[0-9]*'` on `main` then reads `v0.6.0-1-g…`, which is correct: main is
+one commit past the release.
+
+**Always pass `--match` to `git describe`.** Since 0.6.0 the repository carries
+component tags as well as release tags, and a bare `git describe` picks whichever
+tag it finds first at that commit — at the 0.6.0 commit that is
+`module/persons/v0.1.0`, not `v0.6.0`. `--match` is what makes the question
+specific:
+
+```bash
+git describe --match 'v[0-9]*'                 # the software release
+git describe --match 'module/persons/v*'       # one module
+git describe --match 'core/v*'                 # the core kernel
+```
 
 `make release` refuses if the working tree is dirty, if the version in
 `version.py` does not match `VERSION`, if `CHANGELOG.md` has no section for it,

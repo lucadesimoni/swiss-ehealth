@@ -23,6 +23,14 @@ the diff:
 
 ### Fixed
 
+`docs/versioning.md` claimed `git describe` on the release branch reads
+`v0.5.0-1-g…`. That stopped being true the moment component tags landed at the
+0.6.0 commit: a bare `git describe` picks whichever tag it reaches first, which
+there is `module/persons/v0.1.0`. The doc now says to always pass `--match`, and
+shows the glob for a release, a module and the core kernel. No code was
+affected — `version.py` resolves the revision with `rev-parse HEAD`, not
+`describe`.
+
 `make record-component-release` took the recorded commit from `HEAD`, which is
 only correct when it runs before any further commit. Cutting the 0.6.0 baseline
 showed why that is too fragile: two ledgers cannot both be recorded from a clean

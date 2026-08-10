@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -143,10 +144,17 @@ class TestRegistry:
                 assert component.tag.startswith(f"{component.name}/v")
 
     def test_no_component_tag_can_look_like_a_release_tag(self):
-        """``v0.5.0`` is the software release. A component tag must never be
-        mistakable for one, or `git describe` becomes a coin toss."""
+        """``v0.6.0`` is the software release. No component tag may match
+        ``v[0-9]*``, because that glob is what makes
+        ``git describe --match 'v[0-9]*'`` name the release rather than
+        whichever tag git happens to reach first at the same commit.
+
+        This does not make a bare ``git describe`` unambiguous — nothing can,
+        once several tags share a commit — which is why docs/versioning.md
+        tells you to always pass ``--match``.
+        """
         for component in COMPONENTS:
-            assert not component.tag.startswith("v")
+            assert not re.match(r"v[0-9]", component.tag), component.tag
 
     def test_tiers_are_ordered_by_blast_radius(self):
         """`components_by_tier` puts the widest-reaching first, which is the
