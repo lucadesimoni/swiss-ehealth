@@ -46,6 +46,15 @@
       "api_version": "v1",
       "schema_version": 4,
       "audit_payload_version": 2
+    },
+    {
+      "version": "0.6.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "v0.6.0",
+      "date": "2026-08-10",
+      "api_version": "v1",
+      "schema_version": 4,
+      "audit_payload_version": 2
     }
   ]
 }

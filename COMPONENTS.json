@@ -1,5 +1,87 @@
 {
   "$schema_note": "The component ledger. See docs/versioning.md. Append-only: an entry, once committed, is never edited or removed. Each entry is checked against the repository by tests/test_components.py, which parses src/ehealth/components.py at the recorded commit and requires COMPONENT_VERSIONS to declare exactly this version for this component. An empty list is legitimate: the registry may declare a component before it has ever been cut.",
   "manifest_version": 1,
-  "component_releases": []
+  "component_releases": [
+    {
+      "component": "platform",
+      "tier": "platform",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "platform/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "core",
+      "tier": "core",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "core/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "access",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/access/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "audit",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/audit/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "auth",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/auth/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "dossier",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/dossier/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "medication",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/medication/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "offline",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/offline/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    },
+    {
+      "component": "persons",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "028e73dbe4a090f729336ceb6bc9b2c3cd90ff56",
+      "tag": "module/persons/v0.1.0",
+      "date": "2026-08-10",
+      "software_version": "0.6.0"
+    }
+  ]
 }

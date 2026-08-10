@@ -2,12 +2,23 @@
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
 """Append component releases to ``COMPONENTS.json``.
 
-Run by ``make record-component-release`` immediately after the commit that
-carries the component version exists, so the recorded SHA is that commit and
-not the commit which records it. The entry therefore lands one commit later
-than the code it describes — the same honest ordering ``record_release.py``
-uses, for the same reason: you cannot know a commit's hash before you have
-made it.
+Run by ``make record-component-release`` after ``make release-component`` has
+cut the tag. The entry lands one commit later than the code it describes — the
+same honest ordering ``record_release.py`` uses, for the same reason: you
+cannot know a commit's hash before you have made it.
+
+**Where the recorded commit comes from.** The component's annotated tag, when
+it exists: the tag *is* the statement of which commit that version was cut
+from, so reading it back means the ledger and the tag cannot disagree — and
+``test_tags_agree_with_the_ledger_where_they_exist`` is precisely the check
+that would otherwise fail. Only when no tag exists yet does this fall back to
+``HEAD``, and only then does a dirty tree matter, because only then is the
+commit inferred from what is on disk rather than read from a tag.
+
+That distinction is what makes recording order-independent. Two ledgers cannot
+both be recorded from a clean tree in one commit — whichever runs second sees
+the first one's edit — and a component ledger keyed to ``HEAD`` would then
+record the wrong commit.
 
 With no argument it records every component whose declared version is not yet
 in the ledger, which is what cutting the baseline needs. With
@@ -20,6 +31,7 @@ in, so an entry cannot disagree with the code it points at.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 
@@ -35,7 +47,6 @@ from ehealth.components import (
     unreleased_components,
 )
 from ehealth.releases import repo_root
-from ehealth.version import __version__
 
 NOTE = (
     "The component ledger. See docs/versioning.md. Append-only: an entry, "
@@ -59,6 +70,36 @@ def git(*args: str) -> str:
     return result.stdout.strip()
 
 
+def git_or_none(*args: str) -> str | None:
+    """For questions where "no" is an answer, not a failure."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_root(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def commit_of_tag(tag: str) -> str | None:
+    return git_or_none("rev-list", "-n1", tag)
+
+
+def software_version_at(commit: str) -> str | None:
+    """The ``__version__`` that commit declares.
+
+    Read out of the commit rather than off the disk, so an entry recorded later
+    still names the version that was actually in force when the component was
+    cut. Textual, because importing the module would run it.
+    """
+    shown = git_or_none("show", f"{commit}:src/ehealth/version.py")
+    if shown is None:
+        return None
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"', shown, re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -66,14 +107,6 @@ def main(argv: list[str] | None = None) -> int:
         help="record only this component; default is every unrecorded one",
     )
     arguments = parser.parse_args(argv)
-
-    if git("status", "--porcelain"):
-        print(
-            "refusing to record a component release from a dirty tree: the "
-            "recorded commit would not describe what is on disk",
-            file=sys.stderr,
-        )
-        return 1
 
     try:
         existing = load_manifest()
@@ -107,21 +140,42 @@ def main(argv: list[str] | None = None) -> int:
         print("every declared component version is already recorded")
         return 0
 
-    commit = git("rev-parse", "HEAD")
-    date = git("show", "-s", "--format=%cd", "--date=format:%Y-%m-%d", "HEAD")
+    # A component with no tag yet is recorded from HEAD, which is only
+    # meaningful if HEAD describes what is on disk.
+    if any(commit_of_tag(component.tag) is None for component in pending):
+        if git("status", "--porcelain"):
+            print(
+                "refusing to infer a component's commit from HEAD on a dirty "
+                "tree: the recorded commit would not describe what is on disk. "
+                "Cut the tag first with `make release-component`, or commit.",
+                file=sys.stderr,
+            )
+            return 1
 
-    entries = [
-        ComponentRelease(
-            component=component.name,
-            tier=component.tier,
-            version=component.version,
-            commit=commit,
-            tag=component.tag,
-            date=date,
-            software_version=__version__,
+    entries: list[ComponentRelease] = []
+    for component in pending:
+        commit = commit_of_tag(component.tag) or git("rev-parse", "HEAD")
+        declared = software_version_at(commit)
+        if declared is None:
+            print(
+                f"cannot read the software version at {commit[:7]}, so "
+                f"{component.name} {component.version} cannot be recorded",
+                file=sys.stderr,
+            )
+            return 1
+        entries.append(
+            ComponentRelease(
+                component=component.name,
+                tier=component.tier,
+                version=component.version,
+                commit=commit,
+                tag=component.tag,
+                date=git(
+                    "show", "-s", "--format=%cd", "--date=format:%Y-%m-%d", commit
+                ),
+                software_version=declared,
+            )
         )
-        for component in pending
-    ]
 
     rendered = render_manifest((*existing, *entries), NOTE)
     # Parse what we are about to write, so a violated invariant is caught

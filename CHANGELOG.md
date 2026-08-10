@@ -21,6 +21,23 @@ the diff:
 
 ## [Unreleased]
 
+### Fixed
+
+`make record-component-release` took the recorded commit from `HEAD`, which is
+only correct when it runs before any further commit. Cutting the 0.6.0 baseline
+showed why that is too fragile: two ledgers cannot both be recorded from a clean
+tree in one commit — whichever runs second sees the first one's edit — so the
+component ledger would have named the commit that *records* the release instead
+of the one the tags point at, and
+`test_tags_agree_with_the_ledger_where_they_exist` would have failed.
+
+The commit now comes from the component's annotated tag, which is by definition
+the statement of where that version was cut, so the ledger and the tag cannot
+disagree. `software_version` is likewise read from `version.py` at that commit
+rather than off the disk. The dirty-tree guard now applies only to the `HEAD`
+fallback, which is the only path where the commit is inferred from what is on
+disk.
+
 ## [0.6.0] — 2026-08-10
 
 Nothing in this release changes the database schema, the API contract or the
