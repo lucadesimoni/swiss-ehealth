@@ -21,6 +21,11 @@ audit payload layout makes every earlier ledger entry unverifiable, and nobody
 notices until an audit. Keeping them separate means each has its own
 compatibility promise, and :func:`release_identity` reports all of them at once
 so a deployed instance can be traced back to a commit and a format.
+
+These describe the tree as a whole. The *parts* version separately in
+:mod:`ehealth.components` — one number per module, plus one for the core kernel
+and one for the platform — because a version that covers everything warns about
+everything, which is the same as warning about nothing.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ from pathlib import Path
 #: Semantic version of the software release. The single source of truth —
 #: ``pyproject.toml`` and ``CHANGELOG.md`` are checked against it by
 #: ``tests/test_versioning.py``, so the three can never drift apart.
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 #: HTTP API contract. Bumped only on a breaking change to routes or payloads.
 API_VERSION = "v1"

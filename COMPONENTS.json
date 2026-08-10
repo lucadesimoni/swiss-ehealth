@@ -1,0 +1,5 @@
+{
+  "$schema_note": "The component ledger. See docs/versioning.md. Append-only: an entry, once committed, is never edited or removed. Each entry is checked against the repository by tests/test_components.py, which parses src/ehealth/components.py at the recorded commit and requires COMPONENT_VERSIONS to declare exactly this version for this component. An empty list is legitimate: the registry may declare a component before it has ever been cut.",
+  "manifest_version": 1,
+  "component_releases": []
+}

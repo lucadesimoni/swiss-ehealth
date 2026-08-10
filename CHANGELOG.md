@@ -12,6 +12,7 @@ the diff:
 
 | | API | DB schema | Audit payload |
 |---|---|---|---|
+| 0.6.0 | v1 | 4 | 2 |
 | 0.5.0 | v1 | 4 | 2 |
 | 0.4.0 | v1 | 4 | 2 |
 | 0.3.0 | v1 | 3 | 2 |
@@ -19,6 +20,92 @@ the diff:
 | 0.1.0 | v1 | 1 | 1 |
 
 ## [Unreleased]
+
+## [0.6.0] — 2026-08-10
+
+Nothing in this release changes the database schema, the API contract or the
+signed audit payload. It changes what the version numbers are *able to say*.
+
+### Added
+
+**The parts are versioned, not just the whole.** Until now one number covered
+everything, so it warned about everything — which is the same as warning about
+nothing. A clinic integrating only the medication module could not tell from
+`0.5.0 → 0.6.0` whether anything it depended on had moved.
+
+`src/ehealth/components.py` declares three tiers, ordered by blast radius:
+
+- **`platform`** — configuration names, database wiring, the container, process
+  startup, the schema boot guard, the shared API scaffolding, both ledgers. A
+  breaking change here breaks every module and the deployment running them.
+- **`core`** — AHVN13-derived UIDs, identity rules, crypto and keys, capability
+  tokens, MFA, OIDC, and the ORM models every module stores through. A breaking
+  change here can invalidate material already issued: a stored token, a derived
+  UID.
+- **`module`** — one capability with its own HTTP surface: `persons`, `dossier`,
+  `medication`, `access`, `audit`, `offline`, `auth`. A breaking change here
+  breaks that module's clients and nobody else's.
+
+That ordering is the useful part: a module MAJOR is a conversation with one
+integrator, a core MAJOR is a conversation with all of them. Models are core
+while the services over them are modules — `models/audit.py` is kernel,
+`services/audit.py` is the audit module — because getting that split wrong is
+what makes tiers decorative.
+
+Every component starts at `0.1.0`, declared here. The numbers do not reach back
+over 0.1.0–0.5.0: component boundaries were not declared then, so any earlier
+per-component number would be a retrofitted guess.
+
+**Ownership is total and exclusive.** Every `.py` file under `src/ehealth`
+belongs to exactly one component, and the suite fails if a file is owned twice
+or not at all — a file owned by nothing is covered by no version promise, and
+nothing breaks until an integrator trusts a version that never accounted for it.
+Adding a file now means naming its owner.
+
+**The component ledger** — `COMPONENTS.json` records, for every released
+component version, the commit it was cut from, its tier, its tag and the
+software version in force at that commit. Same reasoning as `RELEASES.json`:
+tags are the ergonomic handle, and a clone that arrives without `refs/tags/*`
+would otherwise have no record of which commit a module version came from.
+
+Entries are checked against the repository rather than merely parsed: the suite
+parses `src/ehealth/components.py` at each recorded commit with `ast` and
+requires `COMPONENT_VERSIONS` to declare exactly the version claimed. It parses
+rather than imports, because verifying what a component declared two years ago
+must not mean executing two-year-old code.
+
+Two invariants differ from the release ledger, deliberately: an empty ledger is
+legitimate, because the registry may declare a component before it has ever been
+cut; and versions are per-component, so two components may share a commit — the
+baseline is every component cut from one — while one component may not have two
+versions at the same commit.
+
+**Component tags are namespaced** so none can be mistaken for a release tag or
+for another component's: `platform/v0.1.0`, `core/v0.1.0`,
+`module/persons/v0.1.0`. `git tag -l 'module/*'` lists exactly the modules. The
+existing rules hold unchanged — annotated, never lightweight; never moved; never
+deleted.
+
+**`GET /v1/version` reports `components`**, so an integrator asks one endpoint
+instead of reading a diff. It stays behind the admin key with the rest of the
+build provenance: knowing which module versions are deployed narrows an
+attacker's search the same way the revision does.
+
+- `make components` prints the registry and whether each declared version has
+  been cut.
+- `make release-component COMPONENT=<name>` runs the suite and cuts the tag.
+- `make record-component-release` appends to the ledger.
+- `make verify-version` now covers the component registry and its ledger too.
+
+### Fixed
+
+**The release tags v0.1.0–v0.5.0 now exist as annotated tag objects.** The
+ledger had recorded them since 0.5.0 and `RELEASES.json` named the right
+commits, but no tag object had ever been created in the repository, so
+`test_tags_agree_with_the_ledger_where_they_exist` had nothing to compare and
+skipped every entry. Each tag now points at the commit its ledger entry
+records, with its tagger date set to that commit's date rather than to the day
+it was reconstructed.
 
 ## [0.5.0] — 2026-08-10
 

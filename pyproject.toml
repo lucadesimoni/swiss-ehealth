@@ -1,6 +1,6 @@
 [project]
 name = "swiss-ehealth"
-version = "0.5.0"
+version = "0.6.0"
 description = "Swiss e-health patient dossier: AHVN13-derived UIDs, capability tokens, tamper-evident change tracking"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
@@ -62,14 +62,16 @@ ignore = [
 # matches on the name, not the value, and every one of these is an enum member.
 "src/ehealth/models/audit.py" = ["S105"]
 "src/ehealth/security/crypto.py" = ["S105"]
-# These three shell out to git, always with literal arguments and never with
+# These shell out to git, always with literal arguments and never with
 # anything derived from a request. Resolving `git` through PATH is deliberate:
 # it is what makes the code work in a container, a CI runner and a developer's
 # checkout alike. Scoped to these files so a future subprocess call elsewhere
 # is still flagged.
 "src/ehealth/version.py" = ["S603", "S607"]
 "src/ehealth/scripts/record_release.py" = ["S603", "S607"]
+"src/ehealth/scripts/record_component_release.py" = ["S603", "S607"]
 "tests/test_releases.py" = ["S603", "S607"]
+"tests/test_components.py" = ["S603", "S607"]
 
 [tool.pytest.ini_options]
 # "." is not redundant. Several test modules import shared constants from

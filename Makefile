@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 .PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
         version verify-version release record-release releases \
+        components release-component record-component-release \
         migrate migration migrate-status
 
 VENV := .venv
@@ -82,9 +83,11 @@ version:
 	print(json.dumps(release_identity().as_dict(), indent=2))"
 
 ## Version numbers agree across version.py, pyproject.toml and CHANGELOG.md,
-## and every entry in RELEASES.json still matches the commit it names.
+## every entry in RELEASES.json still matches the commit it names, and the
+## component registry and COMPONENTS.json still describe this tree.
 verify-version:
-	@$(PY) -m pytest tests/test_versioning.py tests/test_releases.py -q
+	@$(PY) -m pytest tests/test_versioning.py tests/test_releases.py \
+	    tests/test_components.py -q
 
 ## Print the release ledger: version, commit and compatibility numbers.
 releases:
@@ -92,6 +95,56 @@ releases:
 	print(f'{\"version\":9} {\"commit\":8} {\"date\":11} api  schema  payload'); \
 	[print(f'{r.version:9} {r.short_commit:8} {r.date:11} {r.api_version:4} \
 	{r.schema_version:^6}  {r.audit_payload_version:^7}') for r in load_manifest()]"
+
+## Print the component registry: tier, version, tag, and whether the declared
+## version has been cut yet.
+components:
+	@$(PY) -c "from ehealth.components import components_by_tier, latest_release_of; \
+	print(f'{\"tier\":9} {\"component\":11} {\"version\":8} {\"released\":9} tag'); \
+	[print(f'{c.tier:9} {c.name:11} {c.version:8} \
+	{(\"yes\" if (r := latest_release_of(c.name)) and r.version == c.version else \"not yet\"):9} \
+	{c.tag}') for c in components_by_tier()]"
+
+## Cut a component release: make release-component COMPONENT=persons
+##
+## The version comes from COMPONENT_VERSIONS in src/ehealth/components.py —
+## bump it there first. Refuses on a dirty tree, an unknown component, an
+## existing tag, or a version already in the ledger.
+release-component: verify-version
+	@test -n "$(COMPONENT)" || { \
+	  echo "usage: make release-component COMPONENT=<name>"; \
+	  echo "known:"; $(MAKE) --no-print-directory components; exit 1; }
+	@test -z "$$(git status --porcelain)" || { \
+	  echo "refusing to release from a dirty working tree"; exit 1; }
+	@$(PY) -c "from ehealth.components import find_component; import sys; \
+	sys.exit(0 if find_component('$(COMPONENT)') else 1)" || { \
+	  echo "'$(COMPONENT)' is not a component of this system"; exit 1; }
+	@tag=$$($(PY) -c "from ehealth.components import find_component; \
+	print(find_component('$(COMPONENT)').tag)"); \
+	! git rev-parse "$$tag" >/dev/null 2>&1 || { \
+	  echo "tag $$tag already exists; tags are never moved"; exit 1; }
+	@$(PY) -c "from ehealth.components import find_component, \
+	find_component_release; import sys; c = find_component('$(COMPONENT)'); \
+	sys.exit(0 if find_component_release(c.name, c.version) is None else 1)" || { \
+	  echo "COMPONENTS.json already records that version; the ledger is append-only"; \
+	  exit 1; }
+	$(PY) -m pytest -q
+	@tag=$$($(PY) -c "from ehealth.components import find_component; \
+	print(find_component('$(COMPONENT)').tag)"); \
+	version=$$($(PY) -c "from ehealth.components import find_component; \
+	print(find_component('$(COMPONENT)').version)"); \
+	git tag -a "$$tag" -m "swiss-ehealth $(COMPONENT) $$version"; \
+	echo; echo "tagged $$tag at $$(git rev-parse --short HEAD). Now:"; \
+	echo "  make record-component-release COMPONENT=$(COMPONENT)"; \
+	echo "  git commit -m 'Record $(COMPONENT) $$version in the ledger' COMPONENTS.json"; \
+	echo "  git push -u origin main && git push origin $$tag"
+
+## Append component versions to COMPONENTS.json. With COMPONENT= set, records
+## just that one; with no argument, records every component whose declared
+## version is not in the ledger yet — which is what cutting the baseline needs.
+record-component-release:
+	$(PY) -m ehealth.scripts.record_component_release \
+	    $(if $(COMPONENT),--component $(COMPONENT),)
 
 ## Append the current commit to RELEASES.json. Run straight after the release
 ## commit exists, so the recorded SHA is the release itself and not the commit

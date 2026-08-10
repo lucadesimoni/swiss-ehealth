@@ -22,6 +22,7 @@ from ehealth.api.schemas import (
     LedgerVerificationOut,
     RevisionOut,
 )
+from ehealth.components import component_versions
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditEvent
 from ehealth.security.crypto import SIGNATURE_ALGORITHMS
@@ -184,10 +185,15 @@ def software_version(container: ContainerDep):
     ``revision`` matches a git commit, ``label`` matches the
     ``software_version`` stamped on every ledger entry, so a record can be
     traced to the code that wrote it.
+
+    ``components`` reports the per-component versions, so an integrator who
+    depends on one module can ask this endpoint whether the part they use
+    moved, instead of diffing a release.
     """
     identity = release_identity()
     return {
         **identity.as_dict(),
+        "components": component_versions(),
         "signature_algorithms": {
             name: {"issuing": algorithm.issuing, "available": algorithm.available}
             for name, algorithm in SIGNATURE_ALGORITHMS.items()
