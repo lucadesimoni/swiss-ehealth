@@ -304,7 +304,7 @@ history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 make install     # virtualenv + dependencies
-make test        # 439 tests on SQLite
+make test        # the full suite on SQLite
 make lint        # ruff check + format check, the same gate CI runs
 make seed        # a demo dataset with a full patient journey
 make run         # http://localhost:8000/docs
