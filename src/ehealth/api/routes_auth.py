@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
-"""Login endpoints: SwissID, email OTP, session lifecycle."""
+"""Login endpoints: identity providers, second factor, session lifecycle."""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from ehealth.api.deps import (
     ContainerDep,
@@ -16,6 +16,7 @@ from ehealth.api.deps import (
 )
 from ehealth.api.schemas import (
     AccountLinkIn,
+    IdentityProvidersOut,
     LoginCallbackIn,
     LoginChallengeOut,
     LoginStartOut,
@@ -25,7 +26,7 @@ from ehealth.api.schemas import (
     SessionOut,
 )
 from ehealth.security.crypto import constant_time_equals
-from ehealth.services.auth import AuthError
+from ehealth.services.auth import DEFAULT_PROVIDER, AuthError, SessionTokens
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -51,10 +52,61 @@ def require_admin_key(
 AdminKeyDep = Depends(require_admin_key)
 
 
+def _session_out(tokens: SessionTokens) -> SessionOut:
+    return SessionOut(
+        session_uid=tokens.session_uid,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_at=tokens.expires_at,
+        person_uid=tokens.person_uid,
+        scopes=list(tokens.scopes),
+    )
+
+
+@router.get("/providers", response_model=IdentityProvidersOut)
+def list_providers(container: ContainerDep):
+    """Which identity providers a login page may offer.
+
+    Names only: issuers, client ids and policies stay server-side.
+    """
+    return IdentityProvidersOut(
+        providers=list(container.auth.provider_names), default=DEFAULT_PROVIDER
+    )
+
+
+@router.get("/jwks.json")
+def client_jwks(container: ContainerDep):
+    """Our public signing keys for ``private_key_jwt`` client authentication.
+
+    Registered with (or fetched by) each identity provider so it can verify
+    the assertions this service signs at the token endpoint. Public by
+    design; empty when every provider still uses a client secret.
+    """
+    keys: list[dict] = []
+    for provider in container.identity_providers.values():
+        publish = getattr(provider, "public_jwks", None)
+        if publish is not None:
+            for key in publish()["keys"]:
+                if key not in keys:
+                    keys.append(key)
+    return {"keys": keys}
+
+
 @router.post("/login", response_model=LoginStartOut)
-def start_login(db: DbDep, container: ContainerDep, base: RequestContextDep):
-    """Begin the SwissID authorisation code flow."""
-    url, state = container.auth.begin_login(db, base)
+def start_login(
+    db: DbDep,
+    container: ContainerDep,
+    base: RequestContextDep,
+    provider: Annotated[str, Query(max_length=32)] = DEFAULT_PROVIDER,
+):
+    """Begin the authorisation code flow at the chosen identity provider."""
+    try:
+        url, state = container.auth.begin_login(db, base, provider=provider)
+    except AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="unknown identity provider",
+        ) from exc
     return LoginStartOut(authorization_url=url, state=state)
 
 
@@ -65,10 +117,12 @@ def complete_login(
     container: ContainerDep,
     base: RequestContextDep,
 ):
-    """Exchange the authorisation code and send the second-factor code.
+    """Exchange the authorisation code, then complete the second factor.
 
-    A success here is *not* a login: the session is ``PENDING_MFA`` and can do
-    nothing until the emailed code is verified.
+    With ``second_factor == "otp-email"`` this is *not* a login yet: the
+    session is ``PENDING_MFA`` and can do nothing until the emailed code is
+    verified. With ``"idp"`` the provider already verified two factors and
+    ``session`` carries the tokens.
     """
     try:
         challenge = container.auth.complete_login(
@@ -83,6 +137,8 @@ def complete_login(
         masked_email=challenge.masked_email,
         expires_at=challenge.expires_at,
         attempts_remaining=challenge.attempts_remaining,
+        second_factor=challenge.second_factor,
+        session=_session_out(challenge.tokens) if challenge.tokens else None,
     )
 
 

@@ -1,11 +1,29 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
-"""Login: SwissID first, emailed one-time code second, then a bound session.
+"""Login: a federated identity provider, a second factor, then a session.
 
-The sequence is deliberate. Proving who you are (SwissID) and proving you
-still hold a second factor are separate steps with separate state, and the
-session carries *no authority at all* until both have passed — a
+The sequence is deliberate. Proving who you are (SwissID, HIN, …) and proving
+you still hold a second factor are separate steps with separate state, and
+the session carries *no authority at all* until both have passed — a
 ``PENDING_MFA`` session cannot be exchanged for any token.
+
+**Level of assurance.** Every provider reports how strongly it authenticated
+the user in the ID token's ``acr`` claim. Requesting a level (``acr_values``)
+is not enough: the provider may answer with less. So each provider carries an
+:class:`AssurancePolicy`, checked here, after the token has been verified and
+before anything else happens:
+
+* ``accepted_acr`` — below this, the login is refused outright.
+* ``professional_acr`` — a stricter floor for anyone holding the
+  healthcare-professional role, because a professional's session reaches
+  other people's records.
+* ``mfa_acr`` — levels at which the provider has already verified two
+  factors. Under the EPD model the certified identity provider *is* the
+  two-factor authentication, so a login at such a level is complete. Below
+  it, the emailed one-time code is the second factor.
+
+Policy lives here rather than in the OIDC client so it applies identically to
+every provider, the development mock included.
 
 Accounts are never auto-provisioned from a successful federated login.
 Someone authenticating with a valid SwissID that this system has never heard
@@ -16,7 +34,8 @@ but "is this *that* patient".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, NoReturn
 
@@ -71,19 +90,44 @@ SESSION_SCOPES: dict[PersonRoleKind, tuple[Scope, ...]] = {
 
 OIDC_FLOW_TTL_SECONDS = 600
 
-
-class AuthError(Exception):
-    """Authentication failed. The message is intentionally vague to callers."""
+#: The provider a login uses when the caller names none.
+DEFAULT_PROVIDER = "swissid"
 
 
 @dataclass(frozen=True, slots=True)
-class LoginChallenge:
-    """Returned after SwissID succeeds and the OTP has been sent."""
+class AssurancePolicy:
+    """Which ``acr`` levels a provider's logins must carry. See module doc."""
 
-    session_uid: str
-    masked_email: str
-    expires_at: datetime
-    attempts_remaining: int
+    accepted_acr: frozenset[str] = frozenset()
+    mfa_acr: frozenset[str] = frozenset()
+    professional_acr: frozenset[str] = frozenset()
+
+    def refusal(self, acr: str | None, *, professional: bool) -> str | None:
+        """Why a login at this level must be refused, or ``None``."""
+        if self.accepted_acr and acr not in self.accepted_acr:
+            return f"level of assurance {acr!r} is below the accepted minimum"
+        if professional and self.professional_acr and acr not in self.professional_acr:
+            return (
+                f"level of assurance {acr!r} is below the minimum for "
+                f"healthcare professionals"
+            )
+        return None
+
+    def satisfies_second_factor(self, acr: str | None) -> bool:
+        return acr is not None and acr in self.mfa_acr
+
+
+@dataclass(frozen=True, slots=True)
+class ConfiguredProvider:
+    """An identity provider together with the policy its logins are held to."""
+
+    name: str
+    provider: IdentityProvider
+    policy: AssurancePolicy = field(default_factory=AssurancePolicy)
+
+
+class AuthError(Exception):
+    """Authentication failed. The message is intentionally vague to callers."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +138,23 @@ class SessionTokens:
     expires_at: datetime
     person_uid: str
     scopes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LoginChallenge:
+    """Returned once the identity provider has succeeded.
+
+    ``second_factor`` says what happens next: ``otp-email`` means a code was
+    sent and the session is still pending; ``idp`` means the provider already
+    verified two factors, the session is active, and ``tokens`` is set.
+    """
+
+    session_uid: str
+    masked_email: str
+    expires_at: datetime
+    attempts_remaining: int
+    second_factor: str = "otp-email"
+    tokens: SessionTokens | None = None
 
 
 def mask_email(address: str) -> str:
@@ -110,7 +171,6 @@ class AuthService:
     def __init__(
         self,
         *,
-        provider: IdentityProvider,
         tokens: TokenService,
         otp: OtpService,
         identity: IdentityService,
@@ -121,8 +181,23 @@ class AuthService:
         refresh_ttl_seconds: int = 43_200,
         otp_max_attempts: int = 5,
         max_failed_logins: int = 10,
+        providers: Mapping[str, ConfiguredProvider] | None = None,
+        provider: IdentityProvider | None = None,
     ) -> None:
-        self._provider = provider
+        """``providers`` maps names to configured providers. ``provider`` is a
+        shorthand for a single SwissID provider with no assurance policy —
+        convenient in tests, and refused alongside ``providers``."""
+        if providers is not None and provider is not None:
+            raise ValueError("pass providers or provider, not both")
+        if providers is None:
+            if provider is None:
+                raise ValueError("at least one identity provider is required")
+            providers = {
+                DEFAULT_PROVIDER: ConfiguredProvider(DEFAULT_PROVIDER, provider)
+            }
+        if not providers:
+            raise ValueError("at least one identity provider is required")
+        self._providers = dict(providers)
         self._tokens = tokens
         self._otp = otp
         self._identity = identity
@@ -159,8 +234,8 @@ class AuthService:
         )
         if existing is not None:
             raise AuthError("this identity is already linked to an account")
-        if self._account_for_person(session, person.uid) is not None:
-            raise AuthError("this person already has an account")
+        if self._account_for_person(session, person.uid, issuer) is not None:
+            raise AuthError("this person already has an account at this provider")
 
         uid = new_uid("usr")
         account = IdentityAccount(
@@ -189,25 +264,42 @@ class AuthService:
 
     @staticmethod
     def _account_for_person(
-        session: Session, person_uid: str
+        session: Session, person_uid: str, issuer: str
     ) -> IdentityAccount | None:
         return (
             session.execute(
-                select(IdentityAccount).where(IdentityAccount.person_uid == person_uid)
+                select(IdentityAccount).where(
+                    IdentityAccount.person_uid == person_uid,
+                    IdentityAccount.issuer == issuer,
+                )
             )
             .scalars()
             .first()
         )
 
-    # -- step 1: SwissID --------------------------------------------------
+    @property
+    def provider_names(self) -> tuple[str, ...]:
+        return tuple(self._providers)
 
-    def begin_login(self, session: Session, actor: ActorContext) -> tuple[str, str]:
+    # -- step 1: the identity provider ------------------------------------
+
+    def begin_login(
+        self,
+        session: Session,
+        actor: ActorContext,
+        *,
+        provider: str = DEFAULT_PROVIDER,
+    ) -> tuple[str, str]:
         """Start the authorisation code flow. Returns (redirect URL, state)."""
-        request = self._provider.start()
+        configured = self._providers.get(provider)
+        if configured is None:
+            raise AuthError(f"unknown identity provider {provider!r}")
+        request = configured.provider.start()
         now = utcnow()
         flow = OidcFlow(
             uid=new_uid("ses"),
             state=request.state,
+            provider=configured.name,
             nonce=request.nonce,
             code_verifier=request.code_verifier,
             redirect_uri=request.url,
@@ -223,14 +315,16 @@ class AuthService:
             action=AuditAction.LOGIN_STARTED,
             resource_type="oidc_flow",
             resource_uid=flow.uid,
-            detail={},
+            detail={"provider": configured.name},
         )
         return request.url, request.state
 
     def complete_login(
         self, session: Session, actor: ActorContext, *, state: str, code: str
     ) -> LoginChallenge:
-        """Finish SwissID, then issue the email OTP challenge."""
+        """Finish the provider's flow, check the level of assurance, then
+        either issue the email OTP challenge or — when the provider already
+        verified two factors — activate the session."""
         flow = (
             session.execute(select(OidcFlow).where(OidcFlow.state == state))
             .scalars()
@@ -244,12 +338,25 @@ class AuthService:
         flow.consumed_at = now
         session.flush()
 
+        configured = self._providers.get(flow.provider)
+        if configured is None:
+            # Configuration changed between the start and the callback. The
+            # flow must be finished by the provider that began it, never by
+            # whichever one happens to be configured now.
+            self._fail(session, actor, f"provider {flow.provider!r} is not configured")
+
         try:
-            identity = self._provider.complete(
+            identity = configured.provider.complete(
                 code=code, code_verifier=flow.code_verifier, nonce=flow.nonce
             )
         except OidcError as exc:
             self._fail(session, actor, f"identity provider rejected the code: {exc}")
+
+        # Checked before the account is looked up, so a refusal on assurance
+        # reveals nothing about whether the identity is enrolled here.
+        refusal = configured.policy.refusal(identity.acr, professional=False)
+        if refusal:
+            self._fail(session, actor, f"{configured.name}: {refusal}")
 
         account = self._resolve_account(session, identity)
         if account is None:
@@ -261,19 +368,31 @@ class AuthService:
         if account.locked_until is not None and now < _aware(account.locked_until):
             self._fail(session, actor, "account is temporarily locked")
 
+        professional = self._persons.has_role(
+            session, account.person_uid, PersonRoleKind.HEALTHCARE_PROFESSIONAL
+        )
+        refusal = configured.policy.refusal(identity.acr, professional=professional)
+        if refusal:
+            self._fail(session, actor, f"{configured.name}: {refusal}")
+
         auth_session = AuthSession(
             uid=new_uid("ses"),
             account_uid=account.uid,
             person_uid=account.person_uid,
             state=SessionState.PENDING_MFA.value,
             assurance_level=AssuranceLevel.AAL1.value,
-            auth_methods=["swissid"],
+            auth_methods=[configured.name],
             expires_at=now + timedelta(seconds=OIDC_FLOW_TTL_SECONDS),
             client_ip_hash=actor.client_ip_hash,
             user_agent=(actor.user_agent or None) and actor.user_agent[:200],
         )
         session.add(auth_session)
         session.flush()
+
+        if configured.policy.satisfies_second_factor(identity.acr):
+            return self._complete_with_provider_mfa(
+                session, actor, auth_session, account, configured.name, identity
+            )
 
         challenge = self._issue_otp(session, actor, auth_session, account)
         self._ledger.append(
@@ -287,9 +406,41 @@ class AuthService:
             action=AuditAction.MFA_CHALLENGED,
             resource_type="auth_session",
             resource_uid=auth_session.uid,
-            detail={"channel": "email", "idp_acr": identity.acr},
+            detail={
+                "channel": "email",
+                "provider": configured.name,
+                "idp_acr": identity.acr,
+            },
         )
         return challenge
+
+    def _complete_with_provider_mfa(
+        self,
+        session: Session,
+        actor: ActorContext,
+        auth_session: AuthSession,
+        account: IdentityAccount,
+        provider_name: str,
+        identity: VerifiedIdentity,
+    ) -> LoginChallenge:
+        """The provider asserted two factors: activate without the email code."""
+        tokens = self._activate(
+            session,
+            actor,
+            auth_session,
+            account,
+            method="idp-mfa",
+            detail={"provider": provider_name, "idp_acr": identity.acr},
+        )
+        address = self._identity.open_field(account.uid, "email", account.email_enc)
+        return LoginChallenge(
+            session_uid=auth_session.uid,
+            masked_email=mask_email(address),
+            expires_at=tokens.expires_at,
+            attempts_remaining=0,
+            second_factor="idp",
+            tokens=tokens,
+        )
 
     def _resolve_account(
         self, session: Session, identity: VerifiedIdentity
@@ -401,18 +552,41 @@ class AuthService:
             raise AuthError("invalid or expired code")
 
         challenge.consumed_at = now
+        account = session.get(IdentityAccount, challenge.account_uid)
+        if account is None:
+            self._fail(session, actor, "account vanished")
+        # Receiving the code proves the address works.
+        account.email_verified = True
+        return self._activate(
+            session, actor, auth_session, account, method="otp-email", detail={}
+        )
+
+    def _activate(
+        self,
+        session: Session,
+        actor: ActorContext,
+        auth_session: AuthSession,
+        account: IdentityAccount,
+        *,
+        method: str,
+        detail: dict,
+    ) -> SessionTokens:
+        """Both factors have passed: make the session live and mint tokens.
+
+        The one place a session becomes ``ACTIVE``, whichever factor completed
+        it, so the two paths cannot drift apart in what they grant or record.
+        """
+        now = utcnow()
+        session_uid = auth_session.uid
         auth_session.state = SessionState.ACTIVE.value
         auth_session.assurance_level = AssuranceLevel.AAL2.value
-        auth_session.auth_methods = [*auth_session.auth_methods, "otp-email"]
+        auth_session.auth_methods = [*auth_session.auth_methods, method]
         auth_session.activated_at = now
         auth_session.expires_at = now + timedelta(seconds=self._refresh_ttl)
 
-        account = session.get(IdentityAccount, challenge.account_uid)
-        if account is not None:
-            account.failed_attempts = 0
-            account.locked_until = None
-            account.last_login_at = now
-            account.email_verified = True
+        account.failed_attempts = 0
+        account.locked_until = None
+        account.last_login_at = now
 
         self._ledger.append(
             session,
@@ -425,7 +599,7 @@ class AuthService:
             action=AuditAction.MFA_SUCCEEDED,
             resource_type="auth_session",
             resource_uid=session_uid,
-            detail={},
+            detail={"method": method, **detail},
         )
         tokens = self._mint_session_tokens(session, auth_session)
         self._ledger.append(

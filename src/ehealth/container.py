@@ -12,7 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ehealth.config import Environment, Settings, get_settings
+from ehealth.config import (
+    SWISSID,
+    Environment,
+    IdentityProviderSettings,
+    Settings,
+    get_settings,
+)
 from ehealth.domain.identity import IdentityService
 from ehealth.security.crypto import KeyRing
 from ehealth.security.mfa import (
@@ -30,7 +36,7 @@ from ehealth.security.oidc import (
 from ehealth.security.tokens import TokenService
 from ehealth.services.access import AccessService, ConsentService
 from ehealth.services.audit import AuditLedger
-from ehealth.services.auth import AuthService
+from ehealth.services.auth import AssurancePolicy, AuthService, ConfiguredProvider
 from ehealth.services.changelog import ChangeTracker
 from ehealth.services.dossier import DossierService
 from ehealth.services.medication import MedicationCatalogue, MedicationService
@@ -58,7 +64,49 @@ class Container:
     offline: OfflineBundleService
     sync: OfflineSyncService
     email: EmailSender
+    #: The SwissID provider — kept as its own field because it is the one
+    #: every deployment has, and the one tests drive.
     identity_provider: IdentityProvider
+    identity_providers: dict[str, IdentityProvider]
+
+
+def _build_provider(
+    settings: Settings, provider: IdentityProviderSettings
+) -> IdentityProvider:
+    if settings.use_mock_idp:
+        # One mock per configured name, each under its own issuer, so a
+        # person's SwissID and HIN identities stay distinct in development
+        # exactly as they are in production.
+        issuer = (
+            "https://mock-idp.local"
+            if provider.name == SWISSID
+            else f"https://mock-{provider.name}.local"
+        )
+        return MockIdentityProvider(
+            issuer=issuer,
+            production=settings.environment is Environment.PRODUCTION,
+        )
+    return SwissIdClient(
+        OidcConfig(
+            issuer=provider.issuer,
+            client_id=provider.client_id,
+            client_secret=provider.client_secret,
+            redirect_uri=provider.redirect_uri,
+            scopes=tuple(provider.scopes),
+            acr_values=tuple(provider.acr_values),
+            client_auth_method=provider.client_auth_method,
+            private_key_pem=provider.private_key_pem,
+            private_key_id=provider.private_key_id,
+        )
+    )
+
+
+def _policy(provider: IdentityProviderSettings) -> AssurancePolicy:
+    return AssurancePolicy(
+        accepted_acr=frozenset(provider.accepted_acr),
+        mfa_acr=frozenset(provider.mfa_acr),
+        professional_acr=frozenset(provider.professional_acr),
+    )
 
 
 def build_container(settings: Settings | None = None) -> Container:
@@ -86,19 +134,13 @@ def build_container(settings: Settings | None = None) -> Container:
     ):  # pragma: no cover - guarded again by Settings validation
         raise RuntimeError("production requires a real SMTP sender")
 
-    provider: IdentityProvider = (
-        MockIdentityProvider(production=settings.environment is Environment.PRODUCTION)
-        if settings.use_mock_idp
-        else SwissIdClient(
-            OidcConfig(
-                issuer=settings.swissid_issuer,
-                client_id=settings.swissid_client_id,
-                client_secret=settings.swissid_client_secret,
-                redirect_uri=settings.swissid_redirect_uri,
-                scopes=tuple(settings.swissid_scopes),
-            )
+    configured = {
+        provider.name: ConfiguredProvider(
+            provider.name, _build_provider(settings, provider), _policy(provider)
         )
-    )
+        for provider in settings.identity_providers()
+    }
+    providers = {name: entry.provider for name, entry in configured.items()}
 
     persons = PersonService(identity, ledger, tracker)
     consents = ConsentService(ledger, tracker, persons)
@@ -131,7 +173,7 @@ def build_container(settings: Settings | None = None) -> Container:
             emergency_ttl_seconds=settings.emergency_token_ttl_seconds,
         ),
         auth=AuthService(
-            provider=provider,
+            providers=configured,
             tokens=tokens,
             otp=OtpService(
                 keyring,
@@ -151,7 +193,8 @@ def build_container(settings: Settings | None = None) -> Container:
         offline=OfflineBundleService(keyring, ledger, issuer=settings.issuer),
         sync=OfflineSyncService(medications, ledger),
         email=email,
-        identity_provider=provider,
+        identity_provider=providers[SWISSID],
+        identity_providers=providers,
     )
 
 

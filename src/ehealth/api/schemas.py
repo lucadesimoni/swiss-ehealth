@@ -200,9 +200,18 @@ class LoginChallengeOut(BaseModel):
     masked_email: str
     expires_at: datetime
     attempts_remaining: int
-    #: Always "otp-email" today; present so a client can branch when stronger
-    #: factors are added without changing the response shape.
+    #: ``otp-email``: a code was sent, verify it at ``/auth/mfa/verify``.
+    #: ``idp``: the identity provider already verified two factors; the login
+    #: is complete and ``session`` carries the tokens. Clients must branch on
+    #: this field — only deployments that configure ``mfa_acr`` ever send
+    #: ``idp``, so existing clients keep working until an operator opts in.
     second_factor: str = "otp-email"
+    session: SessionOut | None = None
+
+
+class IdentityProvidersOut(BaseModel):
+    providers: list[str]
+    default: str
 
 
 class OtpVerifyIn(StrictModel):
@@ -605,3 +614,7 @@ class SyncReportOut(BaseModel):
     duplicates: int
     rejected: int
     results: list[SyncResultOut]
+
+
+# LoginChallengeOut refers to SessionOut, which is declared after it.
+LoginChallengeOut.model_rebuild()

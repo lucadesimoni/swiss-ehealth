@@ -1,11 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 swiss-ehealth contributors
-"""OpenID Connect client for SwissID (or any conformant provider).
+"""OpenID Connect client for SwissID, HIN, or any conformant provider.
 
 Implements the authorisation code flow with PKCE and full ID token
 verification — signature against the provider's JWKS, issuer, audience,
 expiry and nonce. None of that is optional: an ID token accepted without
 signature verification is just an attacker-supplied JSON document.
+
+The client authenticates to the provider with either a shared secret
+(``client_secret_post``) or a signed assertion (``private_key_jwt``, RFC 7523).
+The second is preferred: the private key never leaves this system, so a leaked
+configuration file or log line cannot be replayed at the token endpoint, and
+rotating it is a key change rather than a secret shared with a third party.
+
+Whether the *level of assurance* in the ID token is good enough is not decided
+here — that is policy, and it lives in :mod:`ehealth.services.auth` so it
+applies identically to every provider, the mock included.
 
 A :class:`MockIdentityProvider` mirrors the same interface for local
 development and tests. It refuses to be constructed in production, so the
@@ -18,15 +28,16 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
 import httpx
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
     encode_dss_signature,
 )
 
@@ -41,6 +52,14 @@ ACCEPTED_ID_TOKEN_ALGORITHMS = frozenset(
 
 DEFAULT_CLOCK_SKEW = 60
 
+#: Lifetime of a ``private_key_jwt`` client assertion. Short on purpose: it is
+#: used once, immediately, and a long-lived assertion is a replayable secret.
+CLIENT_ASSERTION_TTL_SECONDS = 60
+
+CLIENT_SECRET_POST = "client_secret_post"  # noqa: S105 (a method name, not a secret)
+PRIVATE_KEY_JWT = "private_key_jwt"
+CLIENT_AUTH_METHODS = frozenset({CLIENT_SECRET_POST, PRIVATE_KEY_JWT})
+
 
 class OidcError(Exception):
     pass
@@ -50,15 +69,24 @@ class OidcError(Exception):
 class OidcConfig:
     issuer: str
     client_id: str
-    client_secret: str
     redirect_uri: str
+    client_secret: str = field(default="", repr=False)
     scopes: tuple[str, ...] = ("openid", "profile", "email")
     #: Discovered lazily from ``/.well-known/openid-configuration`` unless set.
     authorization_endpoint: str | None = None
     token_endpoint: str | None = None
     jwks_uri: str | None = None
-    #: SwissID levels of assurance, requested via the ``acr_values`` parameter.
+    #: Levels of assurance to *request*, sent as ``acr_values``. A request is
+    #: only a request — the provider may answer with less, which is why the
+    #: level actually asserted is checked again in the auth service.
     acr_values: tuple[str, ...] = ()
+    #: ``client_secret_post`` or ``private_key_jwt``.
+    client_auth_method: str = CLIENT_SECRET_POST
+    #: PEM-encoded private key for ``private_key_jwt`` (RSA or EC P-256).
+    private_key_pem: str = field(default="", repr=False)
+    #: Key identifier published alongside the public key, so the provider can
+    #: pick the right one during rotation.
+    private_key_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +135,19 @@ class SwissIdClient:
         http: httpx.Client | None = None,
         clock_skew: int = DEFAULT_CLOCK_SKEW,
     ) -> None:
-        if not config.client_id or not config.client_secret:
-            raise OidcError("client credentials are required")
+        if not config.client_id:
+            raise OidcError("a client_id is required")
+        if config.client_auth_method not in CLIENT_AUTH_METHODS:
+            raise OidcError(
+                f"unknown client authentication method {config.client_auth_method!r}"
+            )
+        self._signing_key: Any = None
+        if config.client_auth_method == PRIVATE_KEY_JWT:
+            if not config.private_key_pem:
+                raise OidcError("private_key_jwt needs a private key")
+            self._signing_key = load_client_signing_key(config.private_key_pem)
+        elif not config.client_secret:
+            raise OidcError("client_secret_post needs a client secret")
         self._config = config
         self._http = http or httpx.Client(timeout=10.0)
         self._skew = clock_skew
@@ -175,18 +214,51 @@ class SwissIdClient:
             code_verifier=verifier,
         )
 
+    def _client_authentication(self, token_endpoint: str) -> dict[str, str]:
+        """The form fields that prove to the provider this is our client."""
+        if self._config.client_auth_method == CLIENT_SECRET_POST:
+            return {
+                "client_id": self._config.client_id,
+                "client_secret": self._config.client_secret,
+            }
+        return {
+            "client_id": self._config.client_id,
+            "client_assertion_type": (
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+            ),
+            "client_assertion": build_client_assertion(
+                self._signing_key,
+                key_id=self._config.private_key_id,
+                client_id=self._config.client_id,
+                audience=token_endpoint,
+            ),
+        }
+
+    def public_jwks(self) -> dict[str, Any]:
+        """Our public key as a JWK Set, for registering with the provider.
+
+        Empty under ``client_secret_post``: there is no key to publish.
+        """
+        if self._signing_key is None:
+            return {"keys": []}
+        return {
+            "keys": [
+                public_jwk(self._signing_key.public_key(), self._config.private_key_id)
+            ]
+        }
+
     def complete(
         self, *, code: str, code_verifier: str, nonce: str
     ) -> VerifiedIdentity:
+        token_endpoint = self.metadata()["token_endpoint"]
         token_response = self._http.post(
-            self.metadata()["token_endpoint"],
+            token_endpoint,
             data={
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": self._config.redirect_uri,
-                "client_id": self._config.client_id,
-                "client_secret": self._config.client_secret,
                 "code_verifier": code_verifier,
+                **self._client_authentication(token_endpoint),
             },
             headers={"Accept": "application/json"},
         )
@@ -313,6 +385,103 @@ def _verify_jws(
     except (InvalidSignature, ValueError, KeyError, TypeError):
         return False
     return True
+
+
+# --------------------------------------------------------------------------
+# Client authentication: private_key_jwt (RFC 7523)
+# --------------------------------------------------------------------------
+
+
+def load_client_signing_key(pem: str) -> Any:
+    """Load the client's private key. RSA (2048 bit or more) or EC P-256.
+
+    Anything else is refused here rather than at the first login, so a wrong
+    key fails the deployment instead of a patient.
+    """
+    try:
+        key = serialization.load_pem_private_key(pem.encode("ascii"), password=None)
+    except (ValueError, TypeError) as exc:
+        raise OidcError("client private key is not a readable PEM key") from exc
+    if isinstance(key, rsa.RSAPrivateKey):
+        if key.key_size < 2048:
+            raise OidcError("client RSA key must be at least 2048 bits")
+        return key
+    if isinstance(key, ec.EllipticCurvePrivateKey) and isinstance(
+        key.curve, ec.SECP256R1
+    ):
+        return key
+    raise OidcError("client key must be RSA (>= 2048 bit) or EC P-256")
+
+
+def _client_key_algorithm(key: Any) -> str:
+    return "RS256" if isinstance(key, rsa.RSAPrivateKey) else "ES256"
+
+
+def build_client_assertion(
+    key: Any,
+    *,
+    key_id: str,
+    client_id: str,
+    audience: str,
+    now: int | None = None,
+) -> str:
+    """A signed, single-use JWT proving possession of the client key.
+
+    ``iss`` and ``sub`` are both the client id, ``aud`` is the token endpoint
+    (so an assertion captured at one provider is useless at another), and a
+    random ``jti`` lets the provider refuse a replay within the short lifetime.
+    """
+    issued = int(time.time()) if now is None else now
+    algorithm = _client_key_algorithm(key)
+    header = {"alg": algorithm, "typ": "JWT"}
+    if key_id:
+        header["kid"] = key_id
+    claims = {
+        "iss": client_id,
+        "sub": client_id,
+        "aud": audience,
+        "jti": b64u(secrets.token_bytes(24)),
+        "iat": issued,
+        "exp": issued + CLIENT_ASSERTION_TTL_SECONDS,
+    }
+    signing_input = (
+        f"{b64u(json.dumps(header, separators=(',', ':')).encode())}."
+        f"{b64u(json.dumps(claims, separators=(',', ':')).encode())}"
+    ).encode("ascii")
+    if algorithm == "RS256":
+        signature = key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    else:
+        # cryptography returns DER; JWS wants the raw 32-byte r || s.
+        r, s_value = decode_dss_signature(
+            key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+        )
+        signature = r.to_bytes(32, "big") + s_value.to_bytes(32, "big")
+    return f"{signing_input.decode('ascii')}.{b64u(signature)}"
+
+
+def public_jwk(public_key: Any, key_id: str) -> dict[str, Any]:
+    """Serialise a public key as a JWK, for the provider's client registration."""
+    if isinstance(public_key, rsa.RSAPublicKey):
+        numbers = public_key.public_numbers()
+        jwk = {
+            "kty": "RSA",
+            "alg": "RS256",
+            "n": b64u(numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")),
+            "e": b64u(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")),
+        }
+    else:
+        numbers = public_key.public_numbers()
+        jwk = {
+            "kty": "EC",
+            "alg": "ES256",
+            "crv": "P-256",
+            "x": b64u(numbers.x.to_bytes(32, "big")),
+            "y": b64u(numbers.y.to_bytes(32, "big")),
+        }
+    jwk["use"] = "sig"
+    if key_id:
+        jwk["kid"] = key_id
+    return jwk
 
 
 # --------------------------------------------------------------------------

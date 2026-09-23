@@ -42,15 +42,21 @@ class AccountStatus(StrEnum):
 class IdentityAccount(Base, TimestampMixin, UidPk):
     """A login identity, linked to exactly one person.
 
-    The federated subject from SwissID is the account key; no password is
-    stored here at all, because there is none — authentication is delegated,
-    and the second factor is a one-time code we mint ourselves.
+    The federated subject (issuer + subject) is the account key; no password
+    is stored here at all, because there is none — authentication is
+    delegated to the identity provider.
+
+    A person may hold one account *per provider*: a physician who signs in
+    with HIN at the practice and with SwissID as a patient is one person with
+    two login identities, not two people. Two accounts for the same person at
+    the same provider are refused, because that would be two ways in that
+    nobody could tell apart in the audit trail.
     """
 
     __tablename__ = "identity_account"
     __table_args__ = (
         UniqueConstraint("issuer", "subject", name="uq_account_issuer_subject"),
-        UniqueConstraint("person_uid", name="uq_account_person_uid"),
+        UniqueConstraint("person_uid", "issuer", name="uq_account_person_issuer"),
         Index("ix_account_email_index", "email_index"),
     )
 
@@ -92,6 +98,11 @@ class OidcFlow(Base, UidPk):
     )
 
     state: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Which configured identity provider the flow was started with, so the
+    #: callback is completed by the same one — never by whichever answers.
+    provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="swissid", server_default="swissid"
+    )
     nonce: Mapped[str] = mapped_column(String(64), nullable=False)
     code_verifier: Mapped[str] = mapped_column(String(256), nullable=False)
     redirect_uri: Mapped[str] = mapped_column(String(300), nullable=False)

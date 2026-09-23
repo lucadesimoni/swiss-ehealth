@@ -39,13 +39,13 @@ from pathlib import Path
 #: Semantic version of the software release. The single source of truth —
 #: ``pyproject.toml`` and ``CHANGELOG.md`` are checked against it by
 #: ``tests/test_versioning.py``, so the three can never drift apart.
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 #: HTTP API contract. Bumped only on a breaking change to routes or payloads.
 API_VERSION = "v1"
 
 #: Database schema. Every migration bumps this.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: Layout of the signed audit payload. Bumping it means older entries must
 #: still be verifiable with the builder they were written under, which is why

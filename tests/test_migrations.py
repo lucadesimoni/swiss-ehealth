@@ -225,6 +225,82 @@ class TestConcurrencyGuard:
         assert free, "the migration left its advisory lock held"
 
 
+INITIAL_REVISION = "dbc126357ff5"
+
+
+def _run_alembic(monkeypatch, database_url, action, target):
+    monkeypatch.setenv("EHEALTH_DATABASE_URL", database_url)
+    from ehealth.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        getattr(command, action)(alembic_config(database_url), target)
+    finally:
+        get_settings.cache_clear()
+
+
+class TestLoginIdentityPerProvider:
+    """Schema 5: one login identity per person *per provider*."""
+
+    def test_existing_login_flows_are_backfilled_as_swissid(
+        self, database_url, monkeypatch
+    ):
+        """Every flow started before the migration was a SwissID flow, because
+        SwissID was the only provider — the backfill must say so."""
+        _run_alembic(monkeypatch, database_url, "upgrade", INITIAL_REVISION)
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into oidc_flow (uid, state, nonce, code_verifier, "
+                    "redirect_uri, created_at, expires_at) values "
+                    "('ses_pre', 'st', 'no', 'cv', 'https://x', "
+                    "'2026-08-01 10:00:00', '2026-08-01 10:10:00')"
+                )
+            )
+        _run_alembic(monkeypatch, database_url, "upgrade", "head")
+        with engine.connect() as connection:
+            provider = connection.execute(
+                text("select provider from oidc_flow where uid = 'ses_pre'")
+            ).scalar()
+        assert provider == "swissid"
+        assert read_schema_state(engine).database_version == 5
+
+    def test_downgrade_refuses_once_a_person_has_two_providers(
+        self, container, db, world, system_actor, database_url, monkeypatch
+    ):
+        """Schema 4 allows one identity per person. Rather than fail halfway
+        through a table rebuild — or pick an identity to delete — the
+        downgrade refuses and says why."""
+        for issuer, subject in (("https://a.ch", "beat-a"), ("https://b.ch", "beat-b")):
+            container.auth.link_account(
+                db,
+                system_actor,
+                person=world.doctor,
+                issuer=issuer,
+                subject=subject,
+                email="beat@example.ch",
+            )
+        db.commit()
+        _run_alembic(monkeypatch, database_url, "stamp", "head")
+        with pytest.raises(RuntimeError, match="more than one provider"):
+            _run_alembic(monkeypatch, database_url, "downgrade", INITIAL_REVISION)
+        assert read_schema_state(create_engine(database_url)).database_version == 5
+
+    def test_downgrade_and_upgrade_round_trip_when_nothing_is_shared(
+        self, database_url, monkeypatch
+    ):
+        _run_alembic(monkeypatch, database_url, "upgrade", "head")
+        _run_alembic(monkeypatch, database_url, "downgrade", INITIAL_REVISION)
+        engine = create_engine(database_url)
+        assert read_schema_state(engine).database_version == 4
+        assert "provider" not in {
+            column["name"] for column in inspect(engine).get_columns("oidc_flow")
+        }
+        _run_alembic(monkeypatch, database_url, "upgrade", "head")
+        assert read_schema_state(engine).matches
+
+
 class TestMigrationHygiene:
     def test_the_initial_migration_refuses_to_downgrade(self):
         """Dropping every table is not a rollback, it is data loss with extra

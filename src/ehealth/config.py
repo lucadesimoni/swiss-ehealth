@@ -9,10 +9,11 @@ weaker rather than remember to turn protections on.
 from __future__ import annotations
 
 import os
+import re
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ehealth.security.crypto import KeyPurpose, KeyRing, b64u
@@ -34,6 +35,90 @@ class DataRegion(StrEnum):
 
     CH = "ch"
     CH_LI = "ch-li"
+
+
+#: Name under which the flat ``EHEALTH_SWISSID_*`` settings are registered.
+SWISSID = "swissid"
+
+_PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
+
+
+class IdentityProviderSettings(BaseModel):
+    """One federated identity provider: SwissID, HIN, a community IdP.
+
+    Every provider carries its own assurance policy, because the level names
+    are the provider's own vocabulary — SwissID and HIN do not share one — and
+    because "strong enough for a health record" is a decision per provider,
+    not a global switch.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    issuer: str
+    client_id: str = ""
+    client_secret: str = Field(default="", repr=False)
+    redirect_uri: str = "https://dossier.example.ch/auth/callback"
+    scopes: tuple[str, ...] = ("openid", "profile", "email")
+    #: Levels of assurance requested via ``acr_values``.
+    acr_values: tuple[str, ...] = ()
+    #: The ``acr`` values a login must carry to be accepted at all. Empty
+    #: accepts any level, which production refuses.
+    accepted_acr: tuple[str, ...] = ()
+    #: ``acr`` values that already prove two factors at the provider. A login
+    #: at one of these is complete without the emailed code; below them the
+    #: emailed code is the second factor.
+    mfa_acr: tuple[str, ...] = ()
+    #: Stricter set for people holding the healthcare-professional role.
+    #: Empty means professionals are held to ``accepted_acr`` like everyone.
+    professional_acr: tuple[str, ...] = ()
+    client_auth_method: str = "client_secret_post"
+    private_key_pem: str = Field(default="", repr=False)
+    private_key_id: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        if not _PROVIDER_NAME.match(value):
+            raise ValueError(
+                "provider name must be lowercase letters, digits and dashes, "
+                "starting with a letter, 2-32 characters"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _consistent_policy(self) -> IdentityProviderSettings:
+        accepted = set(self.accepted_acr)
+        if accepted:
+            # A level strong enough to skip the second factor, or required of
+            # professionals, that is not also *accepted* would be unreachable:
+            # the login would be refused before the stronger rule applied.
+            for label, values in (
+                ("mfa_acr", self.mfa_acr),
+                ("professional_acr", self.professional_acr),
+            ):
+                stray = set(values) - accepted
+                if stray:
+                    raise ValueError(
+                        f"{self.name}: {label} {sorted(stray)} is not in accepted_acr"
+                    )
+        if self.client_auth_method not in {"client_secret_post", "private_key_jwt"}:
+            raise ValueError(
+                f"{self.name}: unknown client_auth_method {self.client_auth_method!r}"
+            )
+        return self
+
+    def credential_problems(self) -> list[str]:
+        """What stops this provider working against a real endpoint."""
+        problems = []
+        if not self.client_id:
+            problems.append(f"{self.name}: client_id is not set")
+        if self.client_auth_method == "private_key_jwt":
+            if not self.private_key_pem:
+                problems.append(f"{self.name}: private_key_jwt needs a private key")
+        elif not self.client_secret:
+            problems.append(f"{self.name}: client secret is not set")
+        return problems
 
 
 class Settings(BaseSettings):
@@ -82,6 +167,18 @@ class Settings(BaseSettings):
     swissid_client_secret: str = ""
     swissid_redirect_uri: str = "https://dossier.example.ch/auth/callback"
     swissid_scopes: tuple[str, ...] = ("openid", "profile", "email")
+    #: See :class:`IdentityProviderSettings` for what each of these means.
+    swissid_acr_values: tuple[str, ...] = ()
+    swissid_accepted_acr: tuple[str, ...] = ()
+    swissid_mfa_acr: tuple[str, ...] = ()
+    swissid_professional_acr: tuple[str, ...] = ()
+    swissid_client_auth_method: str = "client_secret_post"
+    swissid_private_key_pem: str = Field(default="", repr=False)
+    swissid_private_key_id: str = ""
+    #: Further providers — HIN for professionals, a community IdP — as a JSON
+    #: list of :class:`IdentityProviderSettings` objects in
+    #: ``EHEALTH_EXTRA_IDENTITY_PROVIDERS``.
+    extra_identity_providers: tuple[IdentityProviderSettings, ...] = ()
     #: Use the in-process fake identity provider. Refused in production.
     use_mock_idp: bool = True
 
@@ -119,8 +216,15 @@ class Settings(BaseSettings):
                 problems.append("EHEALTH_ROOT_KEY must be set")
             if self.use_mock_idp:
                 problems.append("the mock identity provider must be disabled")
-            if not self.swissid_client_id or not self.swissid_client_secret:
-                problems.append("SwissID client credentials must be configured")
+            for provider in self.identity_providers():
+                problems.extend(provider.credential_problems())
+                if not provider.accepted_acr:
+                    # Without it any login the provider completes is accepted,
+                    # including one that only proved control of a mailbox.
+                    problems.append(
+                        f"{provider.name}: accepted_acr must list the levels of "
+                        f"assurance a login needs"
+                    )
             if self.issuer.startswith("http://"):
                 problems.append("issuer must be https")
             if self.database_url.startswith("sqlite"):
@@ -131,6 +235,9 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "refusing to start in production: " + "; ".join(problems)
                 )
+        names = [provider.name for provider in self.identity_providers()]
+        if len(names) != len(set(names)):
+            raise ValueError(f"identity provider names must be unique: {names}")
         if self.max_token_ttl_seconds < max(
             self.session_token_ttl_seconds,
             self.capability_token_ttl_seconds,
@@ -141,6 +248,25 @@ class Settings(BaseSettings):
         return self
 
     # -- derived ----------------------------------------------------------
+
+    def identity_providers(self) -> tuple[IdentityProviderSettings, ...]:
+        """Every configured provider, SwissID first."""
+        swissid = IdentityProviderSettings(
+            name=SWISSID,
+            issuer=self.swissid_issuer,
+            client_id=self.swissid_client_id,
+            client_secret=self.swissid_client_secret,
+            redirect_uri=self.swissid_redirect_uri,
+            scopes=self.swissid_scopes,
+            acr_values=self.swissid_acr_values,
+            accepted_acr=self.swissid_accepted_acr,
+            mfa_acr=self.swissid_mfa_acr,
+            professional_acr=self.swissid_professional_acr,
+            client_auth_method=self.swissid_client_auth_method,
+            private_key_pem=self.swissid_private_key_pem,
+            private_key_id=self.swissid_private_key_id,
+        )
+        return (swissid, *self.extra_identity_providers)
 
     def keyring(self) -> KeyRing:
         """Build the keyring. Generates an ephemeral root key outside

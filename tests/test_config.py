@@ -16,6 +16,7 @@ PROD = dict(
     use_mock_idp=False,
     swissid_client_id="client",
     swissid_client_secret="secret",
+    swissid_accepted_acr=("loa-2", "loa-3"),
     issuer="https://dossier.example.ch",
     database_url="postgresql+psycopg://user@db.local/ehealth",
 )
@@ -36,8 +37,24 @@ class TestProductionHardening:
             Settings(**{**PROD, "use_mock_idp": True})
 
     def test_refuses_missing_swissid_credentials(self):
-        with pytest.raises(ValueError, match="SwissID"):
+        with pytest.raises(ValueError, match="swissid: client secret is not set"):
             Settings(**{**PROD, "swissid_client_secret": ""})
+
+    def test_refuses_a_provider_with_no_required_assurance_level(self):
+        """Without it, any login the provider completes is accepted —
+        including one that only proved control of a mailbox."""
+        with pytest.raises(ValueError, match="accepted_acr must list"):
+            Settings(**{**PROD, "swissid_accepted_acr": ()})
+
+    def test_private_key_jwt_needs_a_key_not_a_secret(self):
+        with pytest.raises(ValueError, match="private_key_jwt needs a private key"):
+            Settings(
+                **{
+                    **PROD,
+                    "swissid_client_secret": "",
+                    "swissid_client_auth_method": "private_key_jwt",
+                }
+            )
 
     def test_refuses_plaintext_http(self):
         with pytest.raises(ValueError, match="https"):
@@ -105,3 +122,58 @@ class TestDefaults:
 def test_the_mock_provider_refuses_to_exist_in_production():
     with pytest.raises(OidcError, match="production"):
         MockIdentityProvider(production=True)
+
+
+class TestIdentityProviders:
+    def test_swissid_comes_first_and_carries_its_policy(self):
+        settings = Settings(
+            swissid_accepted_acr=("loa-2", "loa-3"), swissid_mfa_acr=("loa-3",)
+        )
+        swissid = settings.identity_providers()[0]
+        assert swissid.name == "swissid"
+        assert swissid.accepted_acr == ("loa-2", "loa-3")
+        assert swissid.mfa_acr == ("loa-3",)
+
+    def test_extra_providers_are_read_from_json(self, monkeypatch):
+        monkeypatch.setenv(
+            "EHEALTH_EXTRA_IDENTITY_PROVIDERS",
+            '[{"name": "hin", "issuer": "https://oidc.hin.ch", '
+            '"accepted_acr": ["hin-2fa"], "mfa_acr": ["hin-2fa"]}]',
+        )
+        names = [p.name for p in Settings().identity_providers()]
+        assert names == ["swissid", "hin"]
+
+    def test_a_level_that_skips_the_second_factor_must_also_be_accepted(self):
+        """Otherwise the rule is unreachable: the login is refused before it
+        applies, and the configuration silently means less than it says."""
+        with pytest.raises(ValueError, match=r"mfa_acr .* is not in accepted_acr"):
+            Settings(swissid_accepted_acr=("loa-2",), swissid_mfa_acr=("loa-3",))
+
+    def test_provider_names_must_be_unique(self):
+        from ehealth.config import IdentityProviderSettings
+
+        with pytest.raises(ValueError, match="must be unique"):
+            Settings(
+                extra_identity_providers=(
+                    IdentityProviderSettings(name="swissid", issuer="https://x.ch"),
+                )
+            )
+
+    @pytest.mark.parametrize("name", ["HIN", "1hin", "h", "hin provider", "a" * 33])
+    def test_provider_names_are_constrained(self, name):
+        from ehealth.config import IdentityProviderSettings
+
+        with pytest.raises(ValueError, match="provider name"):
+            IdentityProviderSettings(name=name, issuer="https://x.ch")
+
+    def test_secrets_do_not_appear_in_repr(self):
+        from ehealth.config import IdentityProviderSettings
+
+        provider = IdentityProviderSettings(
+            name="hin",
+            issuer="https://x.ch",
+            client_secret="very-secret-value",
+            private_key_pem="-----BEGIN PRIVATE KEY-----",
+        )
+        assert "very-secret-value" not in repr(provider)
+        assert "BEGIN PRIVATE KEY" not in repr(provider)

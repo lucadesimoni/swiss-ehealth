@@ -12,6 +12,7 @@ the diff:
 
 | | API | DB schema | Audit payload |
 |---|---|---|---|
+| 0.7.0 | v1 | 5 | 2 |
 | 0.6.0 | v1 | 4 | 2 |
 | 0.5.0 | v1 | 4 | 2 |
 | 0.4.0 | v1 | 4 | 2 |
@@ -21,7 +22,66 @@ the diff:
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-23
+
+Login is ready to be tested against real identity providers. API `v1`
+(additive changes only), DB schema **`5`**, audit payload `2`.
+
+### Security
+
+**The level of assurance is now enforced.** Until now the ID token's `acr`
+claim was recorded and never checked, and the level was not even *requested*
+(`acr_values` was never wired from the settings). A login that only proved
+control of a mailbox was accepted like any other. Each provider now carries
+`accepted_acr`, and production refuses to start without it. The check runs
+after the token is verified and before the account lookup, so a refusal
+reveals nothing about whether the identity is enrolled. Removing the check
+makes four tests fail; they were run that way to confirm.
+
+**A stricter floor for healthcare professionals** (`professional_acr`),
+because a professional's session reaches other people's records.
+
 ### Added
+
+**`private_key_jwt` client authentication** (RFC 7523) as an alternative to a
+shared client secret. For each token request we sign a 60-second, single-use
+assertion aimed at that provider's token endpoint, so the private key never
+leaves this system. RSA ≥ 2048 bit or EC P-256; anything weaker is refused
+when the service starts, not at the first login. The public key is served at
+`GET /v1/auth/jwks.json` for registration with the provider.
+
+**A provider's two factors count as the second factor.** A login at a level
+in `mfa_acr` is complete without the emailed code: the callback answers
+`second_factor: "idp"` and carries the session. This matches the EPD model,
+where the certified identification means *is* the two-factor authentication.
+Below that level the email code is still required. Opt-in: nothing changes
+until an operator configures `mfa_acr`.
+
+**Several identity providers.** HIN, community identity providers and others
+sit alongside SwissID, each with its own issuer, credentials and assurance
+policy (`EHEALTH_EXTRA_IDENTITY_PROVIDERS`). `POST /v1/auth/login?provider=…`
+picks one, `GET /v1/auth/providers` lists them, and a login flow can only be
+finished by the provider that started it.
+
+**One login identity per person per provider** (schema 5). A physician using
+HIN at the practice and SwissID as a patient is one person with two ways in.
+Two identities at the *same* provider are still refused. The migration
+backfills existing login flows as SwissID, and its downgrade refuses to run,
+naming the reason, once any person holds two identities. It never picks one
+to delete.
+
+**Tests against a realistic provider** (`tests/test_oidc_provider.py`, 52
+tests): discovery, a rotating JWKS, PKCE and client authentication checked at
+the token endpoint, and real ES256/RS256-signed ID tokens. These cover key
+rotation without a restart, tampered payloads, `none`/`HS256` tokens, a wrong
+issuer, audience or nonce, expiry, reused codes, and our signed assertion
+being verified by the provider. Disabling signature verification makes the
+forgery tests fail.
+
+**`docs/identity-providers.md`**: configuration, key rotation, and a checklist
+for testing against SwissID's and HIN's real integration environments.
+Nothing in this repository can do that step, because it needs their
+credentials.
 
 `make restore-tags` rebuilds every release and component tag from
 `RELEASES.json` and `COMPONENTS.json`, annotated and dated to the commit each
