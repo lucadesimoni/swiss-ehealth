@@ -1,5 +1,8 @@
 # Compliance map
 
+For the path from here to a certified community, see
+[`certification.md`](certification.md).
+
 Where each legal requirement lands in the code, and — just as important —
 where it does not, so nobody mistakes an intention for an implementation.
 
@@ -15,6 +18,8 @@ where it does not, so nobody mistakes an intention for an implementation.
 | Emergency access, recorded and notifiable | `Purpose.EMERGENCY`, capped at RESTRICTED, dedicated `access.emergency` event, `notify_patient` flag | `TestEmergency` |
 | Patients can see who accessed their record (EPDV art. 17) | `GET /audit/me` over the ledger | `test_patient_grants_a_doctor_who_then_prescribes` step 7 |
 | Retention (EPDV art. 10) | `Dossier.retention_until`, 20 years from the last entry, pushed out on every write | `test_opens_with_a_retention_horizon` |
+| Authentication with a certified identification means at the required level of assurance (EPDV) | Per-provider `accepted_acr` enforced after token verification; `professional_acr` for professionals; production refuses to start without it | `tests/test_login_policy.py` |
+| Patient lookups by other systems do not expose the AHVN13, and are audited | PIXm/PDQm refuse the AHVN13 domain, answer professionals only, and log who asked without the search terms | `tests/test_patient_directory.py` |
 | Institutions identified by CHE-UID, professionals by GLN | `CheUid`, GLN validated as a GTIN-13 | `TestCheUid`, `test_rejects_a_bad_gln_on_a_credential` |
 
 ## Healthcare professionals

@@ -103,6 +103,20 @@ this system does not have yet (IUA, MHD, XDS.b/XCA, XCPD, ATNA, CH:EMED, UPI).
 It defaults to a placeholder under the example arc `2.999`, which production
 refuses.
 
+**`docs/certification.md`**: certification treated as a project of its own.
+Under the EPDG it is the operating *community* that gets certified, not the
+software, and about half the work is organisational. The document lists what
+this repository already evidences (with the test for each claim), what it
+cannot cover (the operating organisation, ISMS, DSFA, patient onboarding,
+national services, Projectathon, external pen test), the remaining technical
+work in dependency order, a phased 12–24-month plan, and the evidence folder
+an auditor will ask for.
+
+**Component versions:** `platform`, `core`, `auth` and `persons` move to
+`0.2.0`. All the changes add things and remove nothing. `interop` is new at
+`0.1.0`. `access`, `audit`, `dossier`, `medication` and `offline` are
+unchanged at `0.1.0`.
+
 **`docs/identity-providers.md`**: configuration, key rotation, and a checklist
 for testing against SwissID's and HIN's real integration environments.
 Nothing in this repository can do that step, because it needs their

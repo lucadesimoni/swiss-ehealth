@@ -63,15 +63,15 @@ TIERS = ("module", "core", "platform")
 #: see the module docstring. This is the single source of truth; the registry
 #: below reads it, and the ledger is checked against it at each recorded commit.
 COMPONENT_VERSIONS: dict[str, str] = {
-    "platform": "0.1.0",
-    "core": "0.1.0",
+    "platform": "0.2.0",
+    "core": "0.2.0",
     "access": "0.1.0",
     "audit": "0.1.0",
-    "auth": "0.1.0",
+    "auth": "0.2.0",
     "dossier": "0.1.0",
     "medication": "0.1.0",
     "offline": "0.1.0",
-    "persons": "0.1.0",
+    "persons": "0.2.0",
     "interop": "0.1.0",
 }
 
