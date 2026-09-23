@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 .PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
-        version verify-version release record-release releases \
+        version verify-version release record-release releases restore-tags \
         components release-component record-component-release \
         migrate migration migrate-status
 
@@ -151,6 +151,19 @@ record-component-release:
 ## that records it — you cannot know a commit's hash before you have made it.
 record-release:
 	$(PY) -m ehealth.scripts.record_release
+
+## Recreate every release and component tag from RELEASES.json and
+## COMPONENTS.json, then publish them:
+##   make restore-tags && git push origin --tags
+##
+## For a clone that has the ledgers but not the tags — which is every clone
+## while tags cannot be pushed from where releases are cut. Each tag is
+## annotated, points at the commit its ledger entry records, and carries that
+## commit's date as its tagger date rather than the day it was rebuilt. An
+## existing tag is left alone if it already points at the right commit and is
+## refused if it points anywhere else: tags are never moved.
+restore-tags:
+	$(PY) -m ehealth.scripts.restore_tags
 
 ## Cut a release: make release VERSION=0.5.0
 ##

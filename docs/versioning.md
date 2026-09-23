@@ -244,10 +244,13 @@ entry that records it necessarily lands one commit later. `git describe
 one commit past the release.
 
 **Always pass `--match` to `git describe`.** Since 0.6.0 the repository carries
-component tags as well as release tags, and a bare `git describe` picks whichever
-tag it finds first at that commit — at the 0.6.0 commit that is
-`module/persons/v0.1.0`, not `v0.6.0`. `--match` is what makes the question
-specific:
+component tags as well as release tags, and when several annotated tags point at
+one commit a bare `git describe` answers with the one *created most recently*.
+At the 0.6.0 commit that was `module/persons/v0.1.0`, the last tag cut for the
+baseline — but it depends on nothing more than tag creation order, so a clone
+whose tags were recreated in another order gets a different answer, sometimes
+even `v0.6.0`. An answer that depends on that is not an answer. `--match` is
+what makes the question specific:
 
 ```bash
 git describe --match 'v[0-9]*'                 # the software release

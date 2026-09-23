@@ -21,15 +21,36 @@ the diff:
 
 ## [Unreleased]
 
+### Added
+
+`make restore-tags` rebuilds every release and component tag from
+`RELEASES.json` and `COMPONENTS.json`, annotated and dated to the commit each
+one names, for publishing with `git push origin --tags`. It is idempotent, and
+refuses rather than moves a tag that already points somewhere else. Until now a
+fresh clone could not have pushed the tags even from a machine allowed to: none
+existed anywhere to push.
+
 ### Fixed
 
 `docs/versioning.md` claimed `git describe` on the release branch reads
 `v0.5.0-1-g…`. That stopped being true the moment component tags landed at the
-0.6.0 commit: a bare `git describe` picks whichever tag it reaches first, which
-there is `module/persons/v0.1.0`. The doc now says to always pass `--match`, and
-shows the glob for a release, a module and the core kernel. No code was
-affected — `version.py` resolves the revision with `rev-parse HEAD`, not
-`describe`.
+0.6.0 commit: with several annotated tags at one commit, a bare `git describe`
+answers with the most recently created — there `module/persons/v0.1.0`, but only
+because of the order the baseline tags were cut in. The doc now says to always
+pass `--match`, and shows the glob for a release, a module and the core kernel.
+No code was affected — `version.py` resolves the revision with `rev-parse HEAD`,
+not `describe`.
+
+**Correction to 0.6.0.** Its notes say the release tags v0.1.0–v0.5.0 "now
+exist as annotated tag objects". They were created in a working copy, but the
+push was refused like every earlier tag push from that environment, and the
+repository on GitHub has no tags at all — neither release nor component tags.
+Every clone therefore still has nothing for
+`test_tags_agree_with_the_ledger_where_they_exist` to compare, and the ledgers
+remain the only record of which commit each version is. The released section is
+left as written, because editing it would be exactly the retroactive correction
+the ledgers forbid. `make restore-tags && git push origin --tags` from a machine
+that can push tags publishes them, at the commits the ledgers name.
 
 `make record-component-release` took the recorded commit from `HEAD`, which is
 only correct when it runs before any further commit. Cutting the 0.6.0 baseline

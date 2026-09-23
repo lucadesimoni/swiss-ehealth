@@ -70,6 +70,7 @@ ignore = [
 "src/ehealth/version.py" = ["S603", "S607"]
 "src/ehealth/scripts/record_release.py" = ["S603", "S607"]
 "src/ehealth/scripts/record_component_release.py" = ["S603", "S607"]
+"src/ehealth/scripts/restore_tags.py" = ["S603", "S607"]
 "tests/test_releases.py" = ["S603", "S607"]
 "tests/test_components.py" = ["S603", "S607"]
 
