@@ -82,6 +82,51 @@
       "tag": "module/persons/v0.1.0",
       "date": "2026-08-10",
       "software_version": "0.6.0"
+    },
+    {
+      "component": "platform",
+      "tier": "platform",
+      "version": "0.2.0",
+      "commit": "46f807f6af46b781d4546cf6ff007355c6033094",
+      "tag": "platform/v0.2.0",
+      "date": "2026-09-23",
+      "software_version": "0.7.0"
+    },
+    {
+      "component": "core",
+      "tier": "core",
+      "version": "0.2.0",
+      "commit": "46f807f6af46b781d4546cf6ff007355c6033094",
+      "tag": "core/v0.2.0",
+      "date": "2026-09-23",
+      "software_version": "0.7.0"
+    },
+    {
+      "component": "auth",
+      "tier": "module",
+      "version": "0.2.0",
+      "commit": "46f807f6af46b781d4546cf6ff007355c6033094",
+      "tag": "module/auth/v0.2.0",
+      "date": "2026-09-23",
+      "software_version": "0.7.0"
+    },
+    {
+      "component": "interop",
+      "tier": "module",
+      "version": "0.1.0",
+      "commit": "46f807f6af46b781d4546cf6ff007355c6033094",
+      "tag": "module/interop/v0.1.0",
+      "date": "2026-09-23",
+      "software_version": "0.7.0"
+    },
+    {
+      "component": "persons",
+      "tier": "module",
+      "version": "0.2.0",
+      "commit": "46f807f6af46b781d4546cf6ff007355c6033094",
+      "tag": "module/persons/v0.2.0",
+      "date": "2026-09-23",
+      "software_version": "0.7.0"
     }
   ]
 }
