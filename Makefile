@@ -2,7 +2,7 @@
 .PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
         version verify-version release record-release releases restore-tags \
         components release-component record-component-release \
-        migrate migration migrate-status
+        migrate migration migrate-status reindex-demographics
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -58,6 +58,11 @@ keygen:
 ## Bring the database up to the latest migration.
 migrate:
 	$(VENV)/bin/alembic upgrade head
+
+## Fill the demographic search index for people registered before schema 5.
+## Needs the application's root key, which is why the migration cannot do it.
+reindex-demographics:
+	$(PY) -m ehealth.scripts.reindex_demographics
 
 ## Show where the database is versus the migrations.
 migrate-status:

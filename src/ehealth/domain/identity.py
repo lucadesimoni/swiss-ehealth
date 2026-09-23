@@ -38,8 +38,10 @@ Two notes on the EPR-SPID:
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import date
 
 from ehealth.domain.uid import SPID_PREFIX, Ahvn13, spid_from_entropy
 from ehealth.security.crypto import KeyPurpose, KeyRing, b64u
@@ -100,6 +102,22 @@ class IdentityService:
         """
         return self._keys.blind_index(
             KeyPurpose.PERSON_LOOKUP_INDEX, b"ahvn13|" + ahvn.reveal().encode("ascii")
+        )
+
+    def demographic_index(self, family_name: str, birth_date: date) -> str:
+        """Blind index over (normalised family name, date of birth).
+
+        What makes a demographic patient search possible without decrypting
+        every name in the database, and without storing a searchable name.
+        Deliberately coarse: it answers "who has this surname *and* this
+        birthday", never "who is called Müller", so the index cannot be
+        used to enumerate a family or a town. Domain-separated from the
+        AHVN13 index by its prefix, under the same rotatable key.
+        """
+        normalised = normalise_family_name(family_name)
+        return self._keys.blind_index(
+            KeyPurpose.PERSON_LOOKUP_INDEX,
+            f"demographic.v1|{normalised}|{birth_date.isoformat()}".encode(),
         )
 
     def spid_candidates(self, ahvn: Ahvn13) -> Iterator[str]:
@@ -170,3 +188,27 @@ class IdentityService:
     @staticmethod
     def _field_aad(entity_uid: str, field: str) -> bytes:
         return f"field|{entity_uid}|{field}".encode()
+
+
+#: Swiss German convention: an umlaut and its two-letter spelling are the same
+#: name. Applied before diacritics are stripped, so ``Müller``, ``Mueller`` and
+#: ``MÜLLER`` all meet — while ``Muller`` stays a different name.
+_TRANSLITERATIONS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}
+
+
+def normalise_family_name(name: str) -> str:
+    """Case-, accent- and punctuation-insensitive form of a family name.
+
+    ``von Allmen-Zürcher`` and ``VON ALLMEN ZUERCHER`` normalise alike; so do
+    ``Rossé`` and ``Rosse``. Only letters survive, so a hyphen or a space the
+    registering clerk typed differently does not split one person in two.
+    """
+    folded = name.casefold()
+    for umlaut, spelled in _TRANSLITERATIONS.items():
+        folded = folded.replace(umlaut, spelled)
+    decomposed = unicodedata.normalize("NFKD", folded)
+    return "".join(
+        char
+        for char in decomposed
+        if char.isalpha() and not unicodedata.combining(char)
+    )

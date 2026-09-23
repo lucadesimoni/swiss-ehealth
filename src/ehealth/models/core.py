@@ -178,6 +178,7 @@ class Person(Base, TimestampMixin, VersionMixin, UidPk):
         UniqueConstraint("ppid", name="uq_person_ppid"),
         UniqueConstraint("spid", name="uq_person_spid"),
         Index("ix_person_lookup_index", "lookup_index"),
+        Index("ix_person_demographic_index", "demographic_index"),
         Index("ix_person_status", "status"),
     )
 
@@ -205,6 +206,10 @@ class Person(Base, TimestampMixin, VersionMixin, UidPk):
     #: Kept in the clear: needed for dose calculation and identity matching,
     #: and useless on its own for re-identification at population scale.
     birth_date: Mapped[date | None] = mapped_column(Date)
+    #: Blind index over (normalised family name, date of birth), for the
+    #: demographic patient search (IHE PDQm). See
+    #: :meth:`IdentityService.demographic_index`.
+    demographic_index: Mapped[str | None] = mapped_column(String(80))
     #: ISO 5218; relevant to reference ranges and dosing.
     administrative_sex: Mapped[str | None] = mapped_column(String(16))
     contact_email_enc: Mapped[str | None] = mapped_column(String(512))

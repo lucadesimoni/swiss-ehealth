@@ -41,6 +41,10 @@ class AuditAction(StrEnum):
     PERSON_REGISTERED = "person.registered"
     PERSON_UPDATED = "person.updated"
     PERSON_MERGED = "person.merged"
+    #: IHE PIXm (ITI-83): identifiers of one patient across domains.
+    PATIENT_CROSS_REFERENCED = "patient.cross_referenced"
+    #: IHE PDQm (ITI-78): a patient search or read by another system.
+    PATIENT_SEARCHED = "patient.searched"
     AHVN_UNSEALED = "person.ahvn_unsealed"
 
     DOSSIER_OPENED = "dossier.opened"

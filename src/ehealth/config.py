@@ -192,6 +192,17 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_from: str = "noreply@dossier.example.ch"
 
+    # -- interoperability -------------------------------------------------
+    #: OID of this community's patient identifier domain (the MPI-PID
+    #: assigning authority), as registered with eHealth Suisse / refdata. The
+    #: default lies under the ITU-T "example" arc 2.999 and is refused in
+    #: production, so a placeholder can never be published to another
+    #: community as if it were a real domain.
+    community_patient_id_oid: str = "2.999.756.1"
+    #: Most patients a demographic search (PDQm) returns. A search that
+    #: matches more than this is too broad to be a lookup of one person.
+    pdq_max_results: int = 10
+
     #: Shared secret for the enrolment/administration endpoints, which are
     #: called by back-office systems rather than by a logged-in person.
     #: Empty disables those endpoints entirely, which is the right default.
@@ -229,6 +240,11 @@ class Settings(BaseSettings):
                 problems.append("issuer must be https")
             if self.database_url.startswith("sqlite"):
                 problems.append("sqlite is not a supported production database")
+            if self.community_patient_id_oid.startswith("2.999"):
+                problems.append(
+                    "community_patient_id_oid is the example placeholder; set "
+                    "the OID registered for this community"
+                )
             if self.admin_api_key and len(self.admin_api_key) < 32:
                 problems.append("admin API key must be at least 32 characters")
             if problems:

@@ -24,8 +24,9 @@ the diff:
 
 ## [0.7.0] — 2026-09-23
 
-Login is ready to be tested against real identity providers. API `v1`
-(additive changes only), DB schema **`5`**, audit payload `2`.
+Login is ready to be tested against real identity providers, and other EPD
+systems can look patients up. API `v1` (additive changes only), DB schema
+**`5`**, audit payload `2`.
 
 ### Security
 
@@ -77,6 +78,30 @@ rotation without a restart, tampered payloads, `none`/`HS256` tokens, a wrong
 issuer, audience or nonce, expiry, reused codes, and our signed assertion
 being verified by the provider. Disabling signature verification makes the
 forgery tests fail.
+
+**Patient identity for other EPD systems: IHE PIXm (ITI-83) and PDQm
+(ITI-78) over FHIR**, per the CH EPR FHIR guide. `GET /v1/fhir/Patient/$ihe-pix`
+cross-references a patient between the EPR-SPID and this community's patient
+id. `GET /v1/fhir/Patient` searches by identifier, or by family name *and*
+date of birth, and `GET /v1/fhir/metadata` describes what the server
+supports. Errors are `OperationOutcome`s with the status each profile
+prescribes. Privacy decisions, each covered by a test that fails when the
+rule is removed:
+- only healthcare professionals may query;
+- only patients are found;
+- the search terms are never written to the audit trail;
+- a result of more than `pdq_max_results` is refused;
+- the AHVN13 is refused as an identifier domain (EPDG art. 5).
+Names stay encrypted: the search uses a keyed blind index over the normalised
+family name and date of birth, which treats `Müller`, `Mueller` and `MÜLLER`
+as one name. Run `make reindex-demographics` once after migrating so people
+registered earlier are found. A new `interop` module component owns this.
+`docs/interoperability.md` lists what the national network also needs and
+this system does not have yet (IUA, MHD, XDS.b/XCA, XCPD, ATNA, CH:EMED, UPI).
+
+`community_patient_id_oid` names this community's patient-identifier domain.
+It defaults to a placeholder under the example arc `2.999`, which production
+refuses.
 
 **`docs/identity-providers.md`**: configuration, key rotation, and a checklist
 for testing against SwissID's and HIN's real integration environments.

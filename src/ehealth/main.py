@@ -24,6 +24,7 @@ from ehealth.api import (
     routes_audit,
     routes_auth,
     routes_dossier,
+    routes_fhir,
     routes_medication,
     routes_offline,
     routes_persons,
@@ -238,6 +239,7 @@ def create_app(
         routes_medication.router,
         routes_offline.router,
         routes_audit.router,
+        routes_fhir.router,
     ):
         app.include_router(router, prefix=f"/{API_VERSION}")
 

@@ -8,8 +8,9 @@ An electronic patient record built around four commitments:
 3. **Every access and every change is recorded in a tamper-evident ledger.**
 4. **The patient decides who sees what, and can revoke it instantly.**
 
-Login is SwissID (OIDC, authorisation code + PKCE) with a mandatory emailed
-one-time code as second factor. Health data is pseudonymised at rest, direct
+Login is SwissID, HIN or another OpenID Connect provider (authorisation code
++ PKCE), with a required level of assurance per provider. The provider's own
+two factors, or else an emailed one-time code, are the second factor. Health data is pseudonymised at rest, direct
 identifiers are encrypted field-by-field, and the whole configuration refuses
 to start in production if any protection is switched off.
 
@@ -138,7 +139,7 @@ life. A stolen token buys an attacker one narrow thing briefly, not everything
 its holder could ever do.
 
 ```
-Authorization: Bearer <session token>     ← who is calling (SwissID + OTP, AAL2)
+Authorization: Bearer <session token>     ← who is calling (provider + 2nd factor, AAL2)
 X-Capability:  <capability token>         ← what they may do, to which dossier
 X-Holder-Key:  <public key>               ← optional proof-of-possession
 ```
@@ -270,7 +271,20 @@ unknown fields rather than ignoring them: a silently dropped field in a health
 API is a silently dropped clinical instruction.
 
 Integration guide, including what is **not** there yet (machine-to-machine
-credentials, a change feed, IHE profiles), in [`docs/api.md`](docs/api.md).
+credentials, a change feed), in [`docs/api.md`](docs/api.md).
+
+**Other EPD systems** look patients up through IHE **PIXm** (ITI-83) and
+**PDQm** (ITI-78) over FHIR under `/v1/fhir`, per the CH EPR FHIR guide.
+Only professionals may query, only patients are found, and the search terms
+never reach the audit trail. What else the national network needs and this
+system does not have yet is listed in
+[`docs/interoperability.md`](docs/interoperability.md).
+
+**Login** goes through SwissID, HIN or any other OpenID Connect provider,
+each with its own required level of assurance. A provider's two factors can
+stand in for the emailed code. Setup and the checklist for the providers'
+real test environments are in
+[`docs/identity-providers.md`](docs/identity-providers.md).
 
 ## Versioning
 
@@ -413,10 +427,10 @@ Stated plainly so nobody mistakes a stub for a feature:
 - **Document storage.** `DossierDocument` records the SHA-256 and a storage
   reference; the blob itself belongs in object storage. The hash is what makes
   that storage untrusted-by-default.
-- **The IHE/XDS profiles** (XDS.b, PIX/PDQ, CH:ATC) that a real EPD community
-  must speak to federate with other communities. The internal model is shaped
-  to map onto them — document class, confidentiality codes, home community —
-  but the transactions are not implemented.
+- **Most of the IHE profiles** a real EPD community must speak to join the
+  national network: IUA access tokens, document exchange (MHD, XDS.b/XCA),
+  XCPD and ATNA. Patient identity over FHIR (PIXm, PDQm) is implemented; the
+  rest is listed in [`docs/interoperability.md`](docs/interoperability.md).
 - **Post-quantum signatures.** ML-DSA-65 is registered in
   `SIGNATURE_ALGORITHMS` and marked unavailable; a token claiming it fails
   closed. The crypto-agile envelope is what makes adding it a local change
@@ -429,8 +443,9 @@ Stated plainly so nobody mistakes a stub for a feature:
 EPDG/LEPD and EPDV (participation, access levels, the audit trail patients can
 read, 20-year retention), the revised DSG (privacy by design and by default,
 right of access), AHVG art. 50g (constraints on systematic use of the AHVN13),
-OIDC Core + RFC 7636 (PKCE), RFC 8725 (JWT best practices), NIST SP 800-63B
-(AAL2 for interactive sessions).
+OIDC Core + RFC 7636 (PKCE) + RFC 7523 (`private_key_jwt`), RFC 8725 (JWT
+best practices), NIST SP 800-63B (AAL2 for interactive sessions), HL7 FHIR R4
+with IHE PIXm/PDQm as constrained by the CH EPR FHIR guide.
 
 ---
 

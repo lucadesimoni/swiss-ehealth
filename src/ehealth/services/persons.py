@@ -177,6 +177,10 @@ class PersonService:
         person.family_name_enc = self._identity.seal_field(
             uid, "family_name", registration.family_name
         )
+        if registration.family_name and registration.birth_date:
+            person.demographic_index = self._identity.demographic_index(
+                registration.family_name, registration.birth_date
+            )
         for field_name, value in (
             ("contact_email", registration.email),
             ("contact_phone", registration.phone),

@@ -72,6 +72,7 @@ COMPONENT_VERSIONS: dict[str, str] = {
     "medication": "0.1.0",
     "offline": "0.1.0",
     "persons": "0.1.0",
+    "interop": "0.1.0",
 }
 
 
@@ -164,6 +165,15 @@ COMPONENTS: tuple[Component, ...] = (
         tier="module",
         summary="Person records, multi-role persons, and their identifiers.",
         paths=("services/persons.py", "api/routes_persons.py"),
+    ),
+    Component(
+        name="interop",
+        tier="module",
+        summary=(
+            "Patient identity lookups for other EPD systems: IHE PIXm "
+            "(ITI-83) and PDQm (ITI-78) as FHIR, per the CH EPR FHIR guide."
+        ),
+        paths=("services/patient_directory.py", "api/routes_fhir.py"),
     ),
     Component(
         name="dossier",

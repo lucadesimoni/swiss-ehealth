@@ -41,6 +41,7 @@ from ehealth.services.changelog import ChangeTracker
 from ehealth.services.dossier import DossierService
 from ehealth.services.medication import MedicationCatalogue, MedicationService
 from ehealth.services.offline import OfflineBundleService
+from ehealth.services.patient_directory import PatientDirectory
 from ehealth.services.persons import OrganizationService, PersonService
 from ehealth.services.sync import OfflineSyncService
 
@@ -68,6 +69,7 @@ class Container:
     #: every deployment has, and the one tests drive.
     identity_provider: IdentityProvider
     identity_providers: dict[str, IdentityProvider]
+    directory: PatientDirectory
 
 
 def _build_provider(
@@ -195,6 +197,13 @@ def build_container(settings: Settings | None = None) -> Container:
         email=email,
         identity_provider=providers[SWISSID],
         identity_providers=providers,
+        directory=PatientDirectory(
+            persons,
+            identity,
+            ledger,
+            community_oid=settings.community_patient_id_oid,
+            max_results=settings.pdq_max_results,
+        ),
     )
 
 

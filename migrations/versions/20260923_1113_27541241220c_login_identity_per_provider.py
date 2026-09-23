@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""login identity per provider
+"""login identity per provider; demographic search index
 
 A person may now hold one login identity per identity provider — HIN at the
 practice and SwissID as a patient — instead of exactly one in total. Each
 login flow also records which provider it was started with, so the callback
 is completed by that provider and no other.
+
+``person.demographic_index`` is a blind index over (normalised family name,
+date of birth) for the IHE PDQm patient search. It starts empty for existing
+people: computing it needs the root key, which a migration must never hold.
+``make reindex-demographics`` fills it afterwards.
 
 Revision ID: 27541241220c
 Revises: dbc126357ff5
@@ -36,6 +41,10 @@ def upgrade() -> None:
     with op.batch_alter_table('identity_account', schema=None) as batch_op:
         batch_op.drop_constraint(batch_op.f('uq_account_person_uid'), type_='unique')
         batch_op.create_unique_constraint('uq_account_person_issuer', ['person_uid', 'issuer'])
+
+    with op.batch_alter_table('person', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('demographic_index', sa.String(length=80), nullable=True))
+        batch_op.create_index('ix_person_demographic_index', ['demographic_index'], unique=False)
 
     from ehealth.schema import stamp_schema_version
     from ehealth.version import version_label
@@ -70,6 +79,10 @@ def downgrade() -> None:
 
     with op.batch_alter_table('oidc_flow', schema=None) as batch_op:
         batch_op.drop_column('provider')
+
+    with op.batch_alter_table('person', schema=None) as batch_op:
+        batch_op.drop_index('ix_person_demographic_index')
+        batch_op.drop_column('demographic_index')
 
     from ehealth.schema import stamp_schema_version
 

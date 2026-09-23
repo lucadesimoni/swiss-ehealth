@@ -17,6 +17,7 @@ PROD = dict(
     swissid_client_id="client",
     swissid_client_secret="secret",
     swissid_accepted_acr=("loa-2", "loa-3"),
+    community_patient_id_oid="2.16.756.5.30.1.999.1",
     issuer="https://dossier.example.ch",
     database_url="postgresql+psycopg://user@db.local/ehealth",
 )
@@ -45,6 +46,12 @@ class TestProductionHardening:
         including one that only proved control of a mailbox."""
         with pytest.raises(ValueError, match="accepted_acr must list"):
             Settings(**{**PROD, "swissid_accepted_acr": ()})
+
+    def test_refuses_the_placeholder_community_oid(self):
+        """Publishing identifiers under the example arc would tell other
+        communities they belong to a domain that does not exist."""
+        with pytest.raises(ValueError, match="community_patient_id_oid"):
+            Settings(**{**PROD, "community_patient_id_oid": "2.999.756.1"})
 
     def test_private_key_jwt_needs_a_key_not_a_secret(self):
         with pytest.raises(ValueError, match="private_key_jwt needs a private key"):
