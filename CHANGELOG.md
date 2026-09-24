@@ -34,6 +34,15 @@ writes atomically, never overwrites, and refuses keys that could escape its
 directory. Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
 `GET /v1/dossiers/{uid}/documents/{doc}/content` returns the bytes.
 
+**The patient's audit trail as FHIR AuditEvents (CH:ATC)**:
+`GET /v1/fhir/AuditEvent?patient.identifier=…[&date=ge…&date=le…]`, the
+EPDV art. 17 right in the shape an EPD patient portal reads. Only the patient
+can read their own trail, not even the treating doctor, and removing that
+check makes a test fail. Document events carry CH:ATC codes; events CH:ATC has
+no code for keep their own name under a local code system. Each event carries
+its ledger sequence number and entry hash, so it can be checked against
+`/v1/audit/verify`.
+
 **IHE MHD over FHIR**: ITI-65 (publish a transaction Bundle), ITI-67 (find
 DocumentReferences) and ITI-68 (retrieve the Binary), per the CH EPR FHIR
 guide. Authorised by the dossier capability token as elsewhere. The EPD

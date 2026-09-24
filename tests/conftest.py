@@ -412,3 +412,50 @@ def registry(client):
         "dossier": dossier.json(),
         "product": product.json(),
     }
+
+
+# -- logged-in people, for the document and FHIR tests ---------------------------
+
+
+@pytest.fixture
+def patient(client, mock_idp, outbox, world):
+    return login(
+        client,
+        mock_idp,
+        outbox,
+        person_uid=world.patient.uid,
+        subject="anna-swissid",
+        email="anna.muster@example.ch",
+    )
+
+
+@pytest.fixture
+def doctor(client, mock_idp, outbox, world):
+    return login(
+        client,
+        mock_idp,
+        outbox,
+        person_uid=world.doctor.uid,
+        subject="beat-swissid",
+        email="beat.arzt@example.ch",
+    )
+
+
+@pytest.fixture
+def headers(client, patient, doctor, world):
+    """A doctor the patient has designated for RESTRICTED material (EPDV
+    annex 2): the grant alone cannot raise the level, the consent rule does."""
+    rule = client.post(
+        "/v1/consent/rules",
+        headers=patient.auth_header,
+        json={
+            "subject_type": "person",
+            "subject_uid": world.doctor.uid,
+            "effect": "allow",
+            "access_level": "restricted",
+        },
+    )
+    assert rule.status_code == 201, rule.text
+    from tests.document_helpers import capability
+
+    return capability(client, patient, doctor, world, level="restricted")

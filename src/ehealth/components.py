@@ -177,6 +177,7 @@ COMPONENTS: tuple[Component, ...] = (
             "services/patient_directory.py",
             "api/routes_fhir.py",
             "api/routes_mhd.py",
+            "api/routes_atc.py",
         ),
     ),
     Component(

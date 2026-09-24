@@ -21,6 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ehealth.api import (
     routes_access,
+    routes_atc,
     routes_audit,
     routes_auth,
     routes_dossier,
@@ -242,6 +243,7 @@ def create_app(
         routes_audit.router,
         routes_fhir.router,
         routes_mhd.router,
+        routes_atc.router,
     ):
         app.include_router(router, prefix=f"/{API_VERSION}")
 

@@ -93,6 +93,7 @@ In roughly the order a community needs them:
 | **XDS.b / XCA** (ITI-18, 41, 43; ITI-38, 39) | The SOAP-based document exchange the EPD network still runs on between communities | Not implemented. This is the largest single piece of work. |
 | **XCPD** (ITI-55) | Finding a patient in *other* communities | Not implemented |
 | **PIX V3 / PDQ V3** (ITI-44, 45, 47) | The HL7v3 SOAP forms of the patient-identity transactions, still used between communities | Not implemented. Only the FHIR forms above exist. |
+| **CH:ATC** patient audit trail | Patients (and their portals) reading who accessed the record | **Implemented** as `GET /v1/fhir/AuditEvent?patient.identifier=…[&date=…]`. Only the patient can read their own trail. Document events use CH:ATC codes; other events keep this system's own names under a local code system. Check the codes against the current value set. |
 | **ATNA** (ITI-20) | Sending audit records to a central audit repository | Not implemented. The internal audit trail is complete and signed, but is not sent in ATNA form. |
 | **CH:ADR / CH:PPQm** | Authorisation decisions and patient privacy policies | Not implemented. Consent is modelled internally. |
 | **CH:EMED** | Exchanging medication documents | Not implemented. Medication is modelled internally. |
