@@ -20,6 +20,46 @@ work is organisational.
 > periodically, and the EPD Act itself is under a major revision. Plan
 > against the current texts and involve the certification body early.
 
+## The law is changing: EPD becomes E-GD
+
+> Status as of September 2026, from the Federal Council's message of
+> 5 November 2025 (BBl 2025 3398) and later parliamentary committee decisions.
+> It has not passed into law. Check the current state before planning on it.
+
+The Federal Council has proposed replacing the EPD with the **electronic
+health dossier (E-GD)**, under a new act (EGDG):
+
+| | EPD today (EPDG) | E-GD as proposed (EGDG) |
+|---|---|---|
+| Participation | opt-in | **opt-out**: a dossier is opened for everyone who does not object |
+| Technical infrastructure | each (reference) community runs its own | **one central infrastructure procured by the Confederation**; existing EPDs are migrated |
+| Communities | communities and reference communities, each certified | no more distinction; the health committee of the National Council (SGK-N) wants **one national community**, run and financed by the cantons, as the point of contact |
+| Identification | certified identification means (SwissID, HIN, …) | **state e-ID and AGOV** first; alternatives possible for healthcare professionals |
+| Timeline | in force | introduction **around 2030** |
+
+**What that means for this codebase.** Building and certifying a new
+community under today's EPDG, for a system that is expected to be migrated
+onto a federal central infrastructure around 2030, is a short-lived
+investment. More durable options, which this plan should choose between
+deliberately:
+
+1. **A certified community until the E-GD arrives**, then migrate. The plan
+   below still applies to this option, but budget it for about four years of
+   operation.
+2. **Components or a reference implementation for the E-GD.** The central
+   infrastructure will be publicly procured. An open-source (AGPL), Swiss-run
+   codebase that already implements the CH EPR FHIR profiles, the audit
+   trail, the confidentiality levels and the identity separation is a
+   credible bid or sub-component, and the work in this repository counts
+   there directly.
+3. **Systems that connect to the E-GD**: a hospital's, practice's or
+   patient-portal system that exchanges with the central infrastructure over
+   the national FHIR interfaces. Most of this code (MHD, PIXm/PDQm/$match,
+   CH:ATC, AGOV/e-ID login) is the client side of exactly that.
+
+In each case the technical work below is the same. What changes is who gets
+certified, against what, and when.
+
 ## The framework, briefly
 
 | Source | What it sets |
@@ -146,12 +186,24 @@ from this repository.
 - **Onboarding procedure** and training records for the staff who verify
   patient identities
 
+## Projectathon
+
+The **Digital Health Projectathon 2026** ran online on 22–23 September 2026
+(registration closed on 17 July). It covered the established EPD tests, the
+national exchange formats with a focus on FHIR, the DigiSanté terminology
+server, and **AGOV login with or without the e-ID (beta)**. The next one to
+plan for is **2027**. Register as soon as the call opens, and prepare these
+test profiles against the eHealth Suisse reference environment:
+PIXm/PDQm (including `$match`), MHD, CH:ATC and, once built, IUA. Also test
+the AGOV login, which is where identification is heading.
+
 ## First steps that don't wait for anything
 
 1. Name the operating organisation and a person accountable for
    certification.
-2. Contact eHealth Suisse: current TOZ version, Projectathon dates, test
-   environment access.
+2. Decide between the three options under "The law is changing" above. Then
+   contact eHealth Suisse (current TOZ, Projectathon 2027, test environment)
+   and follow the EGDG in parliament.
 3. Choose a certification body accredited by SAS and book a pre-assessment
    against this gap list.
 4. Register test clients with SwissID and HIN and work through the checklist

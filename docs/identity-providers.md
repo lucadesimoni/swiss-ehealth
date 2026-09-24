@@ -143,6 +143,35 @@ environment:
    The certification body will ask for this evidence
    (see [`certification.md`](certification.md)).
 
+## AGOV and the state e-ID
+
+Under the proposed E-GD, identification moves to the **state e-ID** and
+**AGOV**, the federal authentication service for authorities. AGOV acts as
+an identity provider over **OpenID Connect** (or SAML), and accepts only
+login factors at the "high" level: the AGOV access app or FIDO2 security
+keys. That makes it a natural entry in `EHEALTH_EXTRA_IDENTITY_PROVIDERS`:
+
+```json
+[{
+  "name": "agov",
+  "issuer": "<AGOV issuer from the relying-party onboarding>",
+  "client_id": "…",
+  "client_auth_method": "private_key_jwt",
+  "private_key_pem": "…",
+  "private_key_id": "dossier-2026-09",
+  "accepted_acr": ["<AGOV level>"],
+  "mfa_acr": ["<AGOV level>"],
+  "professional_acr": ["<AGOV level>"]
+}]
+```
+
+Every AGOV login already uses a hardware-backed second factor, so its level
+belongs in `mfa_acr`, and the emailed code is not sent. The exact issuer,
+claims and `acr` values come from AGOV's relying-party onboarding, which is
+done by an authority or its mandated operator, and the values above are
+placeholders until then. The Projectathon 2026 already offered AGOV (with and
+without the beta e-ID) as a test. That is the place to confirm them.
+
 ## Not implemented yet
 
 - **SAML.** Some professional and community identity providers speak only
@@ -151,7 +180,9 @@ environment:
 - **Passkeys or TOTP as our own second factor.** Below `mfa_acr` the only
   factor we issue ourselves is the emailed code. The better fix is usually to
   require a provider level that already includes two factors.
-- **The federal e-ID.** Once the e-ID infrastructure offers an OpenID Connect
-  interface, it becomes one more entry in `EXTRA_IDENTITY_PROVIDERS`.
+- **Direct e-ID verification.** The e-ID is a verifiable credential in a
+  wallet. Reaching it through AGOV (above) needs no new code. Verifying e-ID
+  presentations directly, as a verifier on the federal trust infrastructure,
+  is a different protocol and is not built.
 - **Logout at the provider.** Our own sessions end properly, but the
   provider's session is not ended (RP-initiated logout is not implemented).

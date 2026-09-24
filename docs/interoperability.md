@@ -6,6 +6,11 @@ Switzerland by eHealth Suisse. A community that doesn't speak them can't join
 the national network, however good its internal API is. This document covers
 what is implemented and, in more detail, what is not.
 
+**Implementation guide version.** Checked against **CH EPR FHIR v5.0.0**
+(generated 2026-01-30), which uses PIXm and PDQm with `$match` for patient
+identification, requires IUA on MHD, and references patients by EPR-SPID. The
+guide is revised each year (HL7 CH ballot); recheck before each Projectathon.
+
 ## Implemented: patient identity over FHIR
 
 Before anyone can exchange a document about a patient, the systems involved
@@ -15,6 +20,7 @@ defines the modern, FHIR-based form of that:
 | Profile | Transaction | Endpoint |
 |---|---|---|
 | **PIXm**: patient identifier cross-reference | ITI-83 | `GET /v1/fhir/Patient/$ihe-pix?sourceIdentifier=urn:oid:…\|…[&targetSystem=urn:oid:…]` |
+| **PDQm `$match`**: patient demographics match, the form v5.0.0 selects | ITI-119 | `POST /v1/fhir/Patient/$match` with `Parameters(resource=Patient, onlyCertainMatches, count)`. Each answer carries `search.score` and a match grade. *certain* only for a known identifier, never for demographics alone. |
 | **PDQm**: patient demographics query | ITI-78 | `GET /v1/fhir/Patient?identifier=…` or `?family=…&birthdate=…[&given=…][&gender=…]`, and `GET /v1/fhir/Patient/{id}` |
 | Capability statement | — | `GET /v1/fhir/metadata` (public) |
 
@@ -88,7 +94,7 @@ In roughly the order a community needs them:
 
 | Profile | Purpose | Status |
 |---|---|---|
-| **IUA** (ITI-71/72, CH:ATC extensions) | Access tokens for the FHIR endpoints, carrying the user's role, purpose of use and the patient in the standard form other communities expect | Not implemented. The FHIR endpoints accept this system's own session token for a professional, which other communities cannot issue. |
+| **IUA** (ITI-71/72, CH:ATC extensions) | Access tokens for the FHIR endpoints, carrying the user's role, purpose of use and the patient in the standard form other communities expect. **v5.0.0 requires IUA on MHD**, so this is the largest remaining conformance gap. | Not implemented. The FHIR endpoints accept this system's own session token for a professional, which other communities cannot issue. |
 | **MHD ITI-66**, metadata update (ITI-105/106) | Finding submission sets; changing document metadata | Not implemented. ITI-65, 67 and 68 are above. |
 | **XDS.b / XCA** (ITI-18, 41, 43; ITI-38, 39) | The SOAP-based document exchange the EPD network still runs on between communities | Not implemented. This is the largest single piece of work. |
 | **XCPD** (ITI-55) | Finding a patient in *other* communities | Not implemented |
