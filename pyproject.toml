@@ -71,6 +71,9 @@ ignore = [
 "src/ehealth/scripts/record_release.py" = ["S603", "S607"]
 "src/ehealth/scripts/record_component_release.py" = ["S603", "S607"]
 "src/ehealth/scripts/restore_tags.py" = ["S603", "S607"]
+"src/ehealth/scripts/restore_rehearsal.py" = ["S603", "S607", "S608"]
+# Seeded pseudo-randomness for reproducible synthetic load, never for secrets.
+"src/ehealth/scripts/load_test.py" = ["S311", "S104"]
 "tests/test_releases.py" = ["S603", "S607"]
 "tests/test_components.py" = ["S603", "S607"]
 

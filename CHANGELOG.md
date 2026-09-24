@@ -34,6 +34,45 @@ writes atomically, never overwrites, and refuses keys that could escape its
 directory. Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
 `GET /v1/dossiers/{uid}/documents/{doc}/content` returns the bytes.
 
+**Retention (EPDV art. 10)**: `make retention [APPLY=1]` destroys the
+health data of dossiers past their retention horizon. It is a dry run by
+default. It removes document contents, document titles, medication free
+text, and the *values* in those rows' change history. It keeps the dossier
+shell, now `archived`, and leaves the audit ledger untouched, so it still
+verifies. Each dossier gets one `data.retention_applied` event with counts
+only.
+
+**Load test** (`make load-test DB=…`): the real app under uvicorn, over HTTP,
+against PostgreSQL. It exercises ITI-65/67/68 and PDQm from concurrent
+workers, reports p50/p95/p99, and fails on any error or on a ledger that no
+longer verifies. Numbers are in `docs/scale.md`.
+
+**Restore rehearsal** (`make restore-rehearsal SOURCE=… TARGET=… [DOCS=…]`):
+`pg_dump` into `pg_restore` into an empty database. It then compares row
+counts, schema version and alembic revision, re-verifies every ledger chain,
+and optionally checks every stored document against its hash. Rehearsed on
+load-test data (3,920 rows, 2,803 ledger entries). With the wrong root key
+every chain fails, which is the point: a backup without its key cannot be
+verified. CI runs the load test and then the rehearsal on every push.
+
+### Fixed
+
+- **A failed commit was reported as success.** With FastAPI's default
+  dependency scope the transaction committed *after* the handler's response
+  had been built. A commit that failed there, from a serialisation conflict
+  or a lost connection, still reached the client as `200 OK`: a registration,
+  a document or a prescription acknowledged and then rolled back. The
+  database session is now function-scoped, so it commits before the response
+  exists. A regression test forces a commit failure and fails on the old
+  scope.
+- **Concurrent writes to one dossier failed 2.7 % of the time.** Found by
+  the first load test. Two appends to the same audit chain could claim the
+  same sequence number, because the tail was locked with `SELECT … FOR
+  UPDATE`: a waiter re-reads the old tail once the lock is released, and an
+  empty chain has nothing to lock. The unique constraint kept the chain
+  intact, but the losing request got a 500. A per-chain transaction advisory
+  lock replaced it: the same run now shows 0 errors and every chain verifies.
+
 **The patient's audit trail as FHIR AuditEvents (CH:ATC)**:
 `GET /v1/fhir/AuditEvent?patient.identifier=…[&date=ge…&date=le…]`, the
 EPDV art. 17 right in the shape an EPD patient portal reads. Only the patient

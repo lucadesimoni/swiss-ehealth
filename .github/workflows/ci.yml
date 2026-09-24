@@ -96,6 +96,22 @@ jobs:
           # redeploy does.
           alembic upgrade head
 
+      # A short load test on its own database: it fails on any request error
+      # or on a ledger chain that no longer verifies after concurrent writes.
+      # Its data then feeds the restore rehearsal, so the backup being proven
+      # is one with thousands of real, signed ledger entries in it.
+      - name: Load test, then prove a backup restores
+        env:
+          PGPASSWORD: ehealth
+        run: |
+          export EHEALTH_ROOT_KEY="$(python -c 'from ehealth.config import generate_root_key; print(generate_root_key())')"
+          psql -h localhost -U ehealth -d ehealth -c "create database loadsrc" -c "create database loaddst"
+          SRC=postgresql+psycopg://ehealth:ehealth@localhost:5432/loadsrc
+          DST=postgresql+psycopg://ehealth:ehealth@localhost:5432/loaddst
+          EHEALTH_DATABASE_URL=$SRC alembic upgrade head
+          python -m ehealth.scripts.load_test --database-url "$SRC" --patients 15 --workers 6 --seconds 15
+          python -m ehealth.scripts.restore_rehearsal --source "$SRC" --target "$DST"
+
   docker:
     runs-on: ubuntu-latest
     steps:

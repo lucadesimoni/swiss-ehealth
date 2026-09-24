@@ -2,7 +2,8 @@
 .PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
         version verify-version release record-release releases restore-tags \
         components release-component record-component-release \
-        migrate migration migrate-status reindex-demographics
+        migrate migration migrate-status reindex-demographics retention \
+        restore-rehearsal load-test
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -58,6 +59,27 @@ keygen:
 ## Bring the database up to the latest migration.
 migrate:
 	$(VENV)/bin/alembic upgrade head
+
+## Back up SOURCE, restore into the empty TARGET, and prove the copy whole:
+## row counts, schema version, every ledger chain, and (DOCS=dir) every
+## stored document against its hash.
+restore-rehearsal:
+	@test -n "$(SOURCE)" -a -n "$(TARGET)" || { \
+	  echo "usage: make restore-rehearsal SOURCE=postgresql+psycopg://… TARGET=… [DOCS=dir]"; exit 1; }
+	$(PY) -m ehealth.scripts.restore_rehearsal --source "$(SOURCE)" --target "$(TARGET)" \
+	    $(if $(DOCS),--documents "$(DOCS)",)
+
+## Drive the real app over HTTP against DB (empty, migrated) and report
+## latency per operation; fails on any error or a ledger that no longer verifies.
+load-test:
+	@test -n "$(DB)" || { echo "usage: make load-test DB=postgresql+psycopg://…"; exit 1; }
+	$(PY) -m ehealth.scripts.load_test --database-url "$(DB)" \
+	    --patients $(or $(PATIENTS),50) --workers $(or $(WORKERS),16) --seconds $(or $(SECONDS),30)
+
+## Destroy health data whose retention period has passed (EPDV art. 10).
+## Dry run by default; `make retention APPLY=1` destroys.
+retention:
+	$(PY) -m ehealth.scripts.apply_retention $(if $(APPLY),--apply,)
 
 ## Fill the demographic search index for people registered before schema 5.
 ## Needs the application's root key, which is why the migration cannot do it.

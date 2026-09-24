@@ -100,11 +100,42 @@ seam, and the allocation loop plus the uniqueness constraint stay either way.
 Stated plainly, because "designed to scale" and "known to scale" are different
 claims and only one of them is true here:
 
-- **No load test has been run.** The partitioning removes a lock that provably
-  serialises; it does not establish a throughput number. Before a cantonal
-  pilot, load-test writes against a realistic dossier distribution.
-- **No migration path.** DB schema version 3 with no Alembic. This is the
-  single biggest gap between this and a deployable system.
+- **The first load test found a real concurrency bug, now fixed.**
+  `make load-test` runs the real app with uvicorn against PostgreSQL 16 and
+  drives it over HTTP: ITI-65 publish, ITI-67 find, ITI-68 retrieve, and PDQm
+  search, from concurrent workers. The first run (30 patients, 8 workers, 30
+  s) lost **2.7 % of requests** with a 500. Two appends to the same dossier's
+  chain claimed the same sequence number, because the tail was locked with
+  `SELECT … FOR UPDATE`. A waiter re-reads the *old* tail row once the lock
+  is released, and an empty chain has no row to lock. The unique constraint
+  kept the chain intact, so nothing was corrupted, but requests failed. A
+  per-chain transaction advisory lock replaced it. After the fix, the same run
+  gave **0 errors** and every chain verified:
+
+  | operation | req/s | p50 ms | p95 ms | p99 ms |
+  |---|---|---|---|---|
+  | publish (ITI-65) | 9.8 | 218 | 308 | 367 |
+  | find (ITI-67) | 12.8 | 182 | 254 | 293 |
+  | retrieve (ITI-68) | 16.6 | 168 | 238 | 269 |
+  | search (PDQm) | 3.8 | 136 | 205 | 262 |
+
+  Single process, one laptop-class container, eight workers concentrated on
+  only 30 dossiers. That concentration is deliberately worse than reality,
+  where two clinicians rarely write to one patient at the same instant. Read
+  these numbers as a floor for comparing versions, not as a capacity figure.
+  Latency rose after the fix because requests to one dossier now queue instead
+  of failing. **Reads write too**: every document read appends an audit entry
+  to that dossier's chain, so concurrent reads of one patient serialise. That
+  is the price of an audit trail patients can check. If a hot dossier ever
+  matters, the lever is to batch ledger appends, not to drop them.
+- **Not yet measured:** many workers across many dossiers (where the
+  partitioning should shine), multiple app processes, and a separate database
+  host.
+- **The restore is rehearsed** (`make restore-rehearsal`): on the load-test
+  data, 3,920 rows and 2,803 audit entries round-tripped through
+  `pg_dump`/`pg_restore`, and every chain re-verified. With a different root
+  key, every chain fails. **Back up the key alongside the data, or the backup
+  cannot be verified.**
 - **`verify_all` is O(everything).** Fine as a nightly job on a replica;
   it is not an endpoint to call in production against the primary.
 - **Anchor checkpoint growth** is proportional to daily active dossiers. At

@@ -47,7 +47,12 @@ def db_session() -> Iterator[Session]:
         session.close()
 
 
-DbDep = Annotated[Session, Depends(db_session)]
+#: ``scope="function"`` is load-bearing. With the default request scope,
+#: FastAPI runs the commit *after* the handler's response has been built, and
+#: a commit that fails there still reaches the client as ``200 OK`` — a write
+#: acknowledged and then rolled back. Function scope commits before the
+#: response exists, so a failed commit is a 5xx and nothing was claimed.
+DbDep = Annotated[Session, Depends(db_session, scope="function")]
 
 
 def hash_client_ip(container: Container, request: Request) -> str | None:

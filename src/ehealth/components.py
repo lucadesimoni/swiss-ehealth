@@ -187,6 +187,7 @@ COMPONENTS: tuple[Component, ...] = (
         paths=(
             "services/dossier.py",
             "services/blobstore.py",
+            "services/retention.py",
             "api/routes_dossier.py",
         ),
     ),

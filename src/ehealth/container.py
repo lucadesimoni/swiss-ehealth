@@ -48,6 +48,7 @@ from ehealth.services.medication import MedicationCatalogue, MedicationService
 from ehealth.services.offline import OfflineBundleService
 from ehealth.services.patient_directory import PatientDirectory
 from ehealth.services.persons import OrganizationService, PersonService
+from ehealth.services.retention import RetentionService
 from ehealth.services.sync import OfflineSyncService
 
 
@@ -75,6 +76,7 @@ class Container:
     identity_provider: IdentityProvider
     identity_providers: dict[str, IdentityProvider]
     directory: PatientDirectory
+    retention: RetentionService
 
 
 def _build_provider(
@@ -141,6 +143,12 @@ def build_container(settings: Settings | None = None) -> Container:
     ):  # pragma: no cover - guarded again by Settings validation
         raise RuntimeError("production requires a real SMTP sender")
 
+    content = DocumentContentStore(
+        FileSystemBlobStore(settings.document_store_path)
+        if settings.document_store_path
+        else MemoryBlobStore(),
+        keyring,
+    )
     configured = {
         provider.name: ConfiguredProvider(
             provider.name, _build_provider(settings, provider), _policy(provider)
@@ -166,12 +174,7 @@ def build_container(settings: Settings | None = None) -> Container:
             tracker,
             persons,
             retention_years=settings.dossier_retention_years,
-            content=DocumentContentStore(
-                FileSystemBlobStore(settings.document_store_path)
-                if settings.document_store_path
-                else MemoryBlobStore(),
-                keyring,
-            ),
+            content=content,
         ),
         catalogue=MedicationCatalogue(ledger, tracker),
         # The medication service asks the person registry whether the author
@@ -211,6 +214,7 @@ def build_container(settings: Settings | None = None) -> Container:
         email=email,
         identity_provider=providers[SWISSID],
         identity_providers=providers,
+        retention=RetentionService(ledger, content),
         directory=PatientDirectory(
             persons,
             identity,

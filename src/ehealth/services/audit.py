@@ -36,11 +36,12 @@ outside the operator's control.
 from __future__ import annotations
 
 import binascii
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from ehealth.db import utcnow
@@ -62,6 +63,10 @@ from ehealth.security.crypto import (
     sha256,
 )
 from ehealth.version import AUDIT_PAYLOAD_VERSION, version_label
+
+#: First key of the two-key advisory lock that serialises appends per chain.
+#: A separate key space from the migration lock, so the two can never collide.
+LEDGER_LOCK_SPACE = 0x4C454447  # "LEDG"
 
 #: Chain for everything that is not scoped to one patient's dossier.
 GLOBAL_CHAIN = "global"
@@ -276,6 +281,7 @@ class AuditLedger:
         not happen at all.
         """
         chain_id = chain_for(dossier_uid)
+        self._lock_chain(session, chain_id)
         tail = self._tail(session, chain_id)
         seq = (tail.seq + 1) if tail else 1
         prev_hash = tail.entry_hash if tail else GENESIS_HASH.hex()
@@ -349,13 +355,35 @@ class AuditLedger:
             .order_by(AuditEvent.seq.desc())
             .limit(1)
         )
-        if session.bind is not None and session.bind.dialect.name != "sqlite":
-            # Serialise concurrent appends *to this chain* so two writers
-            # cannot claim the same seq. Different chains never contend, which
-            # is the whole point of partitioning. SQLite serialises writes at
-            # the file level anyway.
-            stmt = stmt.with_for_update()
         return session.execute(stmt).scalars().first()
+
+    @staticmethod
+    def _lock_chain(session: Session, chain_id: str) -> None:
+        """Serialise appends to one chain until this transaction ends.
+
+        This used to be ``SELECT … FOR UPDATE`` on the tail row, which does not
+        serialise appends. A writer waiting on that lock re-reads the *same*
+        row once the first writer commits — not the new tail the first writer
+        just inserted — so both claim the same ``seq``; and an empty chain has
+        no row to lock at all. The unique constraint on (chain_id, seq) kept
+        the chain intact, but the loser failed with a 500: the load test
+        measured 2.7 % of requests lost this way under eight concurrent
+        workers.
+
+        A transaction-scoped advisory lock on the chain id has neither flaw:
+        it exists whether or not the chain has rows, and the tail is read only
+        after it is held, in a fresh statement that sees the committed state.
+        Different chains still never contend. SQLite serialises writers at the
+        file level, so it needs nothing.
+        """
+        if session.bind is None or session.bind.dialect.name != "postgresql":
+            return
+        digest = hashlib.sha256(chain_id.encode()).digest()
+        key = int.from_bytes(digest[:4], "big", signed=True)
+        session.execute(
+            text("select pg_advisory_xact_lock(:space, :key)"),
+            {"space": LEDGER_LOCK_SPACE, "key": key},
+        )
 
     def head(self, session: Session, chain_id: str) -> AuditEvent | None:
         return self._tail(session, chain_id)

@@ -49,6 +49,11 @@ class BlobBackend(Protocol):
 
     def exists(self, key: str) -> bool: ...
 
+    def delete(self, key: str) -> None:
+        """Remove a blob. Only the retention job calls this: content is
+        otherwise immutable, and a correction is a superseding document."""
+        ...
+
 
 class MemoryBlobStore:
     def __init__(self) -> None:
@@ -65,6 +70,9 @@ class MemoryBlobStore:
 
     def exists(self, key: str) -> bool:
         return key in self.blobs
+
+    def delete(self, key: str) -> None:
+        self.blobs.pop(key, None)
 
 
 class FileSystemBlobStore:
@@ -109,6 +117,9 @@ class FileSystemBlobStore:
     def exists(self, key: str) -> bool:
         return self._path(key).exists()
 
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
+
 
 class DocumentContentStore:
     """Encrypts on the way in, decrypts and verifies on the way out."""
@@ -128,6 +139,9 @@ class DocumentContentStore:
         )
         self._backend.put(document_uid, envelope.encode("ascii"))
         return f"blob:{document_uid}"
+
+    def destroy(self, document_uid: str) -> None:
+        self._backend.delete(document_uid)
 
     def load(self, document_uid: str, *, expected_sha256: str) -> bytes:
         """Fetch, decrypt and check against the hash in the database."""
