@@ -427,10 +427,11 @@ Stated plainly so nobody mistakes a stub for a feature:
 - **An S3 backend for documents.** Contents are stored encrypted on a local
   or mounted file system (`EHEALTH_DOCUMENT_STORE_PATH`). An S3-compatible
   backend on a Swiss provider needs only the three methods of `BlobBackend`.
-- **Most of the IHE profiles** a real EPD community must speak to join the
-  national network: IUA access tokens, document exchange (MHD, XDS.b/XCA),
-  XCPD and ATNA. Patient identity over FHIR (PIXm, PDQm) is implemented; the
-  rest is listed in [`docs/interoperability.md`](docs/interoperability.md).
+- **The SOAP side of the IHE profiles** a real EPD community still needs
+  between communities: XDS.b/XCA, XCPD, ATNA. The FHIR side is implemented:
+  PIXm, PDQm with `$match`, MHD, CH:ATC and IUA access tokens. Details and
+  the remaining gaps are in
+  [`docs/interoperability.md`](docs/interoperability.md).
 - **Post-quantum signatures.** ML-DSA-65 is registered in
   `SIGNATURE_ALGORITHMS` and marked unavailable; a token claiming it fails
   closed. The crypto-agile envelope is what makes adding it a local change

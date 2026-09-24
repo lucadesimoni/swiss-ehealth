@@ -44,6 +44,7 @@ from ehealth.services.blobstore import (
 )
 from ehealth.services.changelog import ChangeTracker
 from ehealth.services.dossier import DossierService
+from ehealth.services.iua import IuaService, IuaSigningKey
 from ehealth.services.medication import MedicationCatalogue, MedicationService
 from ehealth.services.offline import OfflineBundleService
 from ehealth.services.patient_directory import PatientDirectory
@@ -77,6 +78,7 @@ class Container:
     identity_providers: dict[str, IdentityProvider]
     directory: PatientDirectory
     retention: RetentionService
+    iua: IuaService
 
 
 def _build_provider(
@@ -221,6 +223,26 @@ def build_container(settings: Settings | None = None) -> Container:
             ledger,
             community_oid=settings.community_patient_id_oid,
             max_results=settings.pdq_max_results,
+        ),
+        iua=IuaService(
+            settings,
+            keyring,
+            IuaSigningKey(settings.iua_signing_key_pem, settings.iua_signing_key_id),
+            persons=persons,
+            consents=consents,
+            ledger=ledger,
+            # Only real OIDC clients can verify an ID token a portal presents;
+            # the development mock issues none, so it is not listed.
+            identity_verifiers={
+                entry.provider.issuer: entry.provider
+                for entry in configured.values()
+                if isinstance(entry.provider, SwissIdClient)
+            },
+            assurance_policies={
+                entry.provider.issuer: entry.policy
+                for entry in configured.values()
+                if isinstance(entry.provider, SwissIdClient)
+            },
         ),
     )
 

@@ -445,6 +445,11 @@ class AuthorizedAccess:
     max_level: Confidentiality
     actor: ActorContext
 
+    @property
+    def subject_uid(self) -> str:
+        """The person acting: the grantee the capability was minted for."""
+        return self.claims.subject_uid
+
 
 class AccessService:
     def __init__(

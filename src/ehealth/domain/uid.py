@@ -101,6 +101,7 @@ UID_PREFIXES: Final[dict[str, str]] = {
     "ses": "authentication session",
     "usr": "identity account",
     "req": "request correlation id",
+    "iua": "IUA access token or authorisation code",
 }
 
 _UID_RE: Final = re.compile(rf"^([a-z]{{3}})_([{_ALPHABET}]{{{ULID_LEN}}})$")

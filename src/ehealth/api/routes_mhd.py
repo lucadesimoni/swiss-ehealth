@@ -13,11 +13,14 @@ transactions:
 * **ITI-68 Retrieve Document** — ``GET /fhir/Binary/{id}``, the URL each
   DocumentReference's attachment carries.
 
-Authorisation is the same as for the rest of the dossier: a capability token
-(``X-Capability``) for *that patient's* dossier, with ``document:read`` or
-``document:write``. The confidentiality ceiling of the grant filters what a
-search returns, in the query, exactly as ``/dossiers/{uid}/documents`` does —
-a document above the caller's level is neither returned nor counted.
+Authorisation is an **IUA extended access token** (ITI-72) in
+``Authorization: Bearer``, as the guide requires, naming *that patient's*
+EPR-SPID; see :mod:`ehealth.services.iua`. This system's own portal may
+instead present a capability (``X-Capability``) with its session token. Either
+way the confidentiality ceiling — from the patient's consent, evaluated at
+the time of the request — filters what a search returns, in the query,
+exactly as ``/dossiers/{uid}/documents`` does: a document above the caller's
+level is neither returned nor counted.
 
 Mapping to the internal model, deliberately explicit:
 
@@ -36,9 +39,8 @@ DocumentReference                       DossierDocument
                                         published as ``entered-in-error``
 =====================================  =========================================
 
-Not implemented: ITI-66 (find SubmissionSets), metadata update (ITI-105/106),
-and the IUA token this profile expects in the ``Authorization`` header; see
-``docs/interoperability.md``.
+Not implemented: ITI-66 (find SubmissionSets) and metadata update
+(ITI-105/106); see ``docs/interoperability.md``.
 """
 
 from __future__ import annotations
@@ -52,16 +54,15 @@ from fastapi.responses import JSONResponse
 
 from ehealth.api.deps import (
     ContainerDep,
-    CurrentUserDep,
     DbDep,
-    capability_access,
+    DocumentAccess,
+    document_access,
 )
 from ehealth.api.routes_dossier import MAX_DOCUMENT_BYTES
 from ehealth.api.routes_fhir import FHIR_JSON, operation_outcome
 from ehealth.models.base import Confidentiality
 from ehealth.models.clinical import Dossier, DossierDocument
 from ehealth.security.tokens import Scope
-from ehealth.services.access import AuthorizedAccess
 from ehealth.services.dossier import DocumentInput, DossierError
 from ehealth.services.patient_directory import (
     EPR_SPID_OID,
@@ -85,12 +86,8 @@ _STATUS = {
     "retracted": "entered-in-error",
 }
 
-ReadAccess = Annotated[
-    AuthorizedAccess, Depends(capability_access(Scope.DOCUMENT_READ))
-]
-WriteAccess = Annotated[
-    AuthorizedAccess, Depends(capability_access(Scope.DOCUMENT_WRITE))
-]
+ReadAccess = Annotated[DocumentAccess, Depends(document_access(Scope.DOCUMENT_READ))]
+WriteAccess = Annotated[DocumentAccess, Depends(document_access(Scope.DOCUMENT_WRITE))]
 
 
 def _fhir(body: dict[str, Any], status: int = 200) -> JSONResponse:
@@ -105,7 +102,7 @@ def _base(request: Request) -> str:
     return f"{str(request.base_url).rstrip('/')}/{API_VERSION}/fhir"
 
 
-def _patient_dossier(db, container, access: AuthorizedAccess, identifier: str):
+def _patient_dossier(db, container, access: DocumentAccess, identifier: str):
     """The dossier the identifier names — which must be the one the
     capability was issued for. A token for Anna's dossier cannot be pointed
     at Beat's by changing a query parameter."""
@@ -385,7 +382,6 @@ async def provide_document_bundle(
     request: Request,
     db: DbDep,
     container: ContainerDep,
-    user: CurrentUserDep,
     access: WriteAccess,
 ):
     try:
@@ -404,7 +400,7 @@ async def provide_document_bundle(
                 403,
                 "forbidden",
             )
-        author = container.persons.get(db, user.claims.subject_uid)
+        author = container.persons.get(db, access.subject_uid)
         created: list[DossierDocument] = []
         for reference, content in documents:
             replaces = [

@@ -283,6 +283,33 @@ class SwissIdClient:
     # -- ID token verification -------------------------------------------
 
     def verify_id_token(self, id_token: str, *, nonce: str) -> dict[str, Any]:
+        claims = self._signed_claims(id_token)
+        self._check_claims(claims, audiences=(self._config.client_id,))
+        if claims.get("nonce") != nonce:
+            raise OidcError("ID token nonce mismatch")
+        return claims
+
+    def verify_presented_id_token(
+        self, id_token: str, *, audiences: tuple[str, ...], max_age: int
+    ) -> dict[str, Any]:
+        """Verify an ID token that another relying party obtained.
+
+        The IUA flow (CH EPR FHIR, ITI-71) has a portal authenticate the user
+        and present the resulting ID token to us as ``client_assertion``. We
+        never saw the login, so there is no nonce to check. What stands in
+        for it: the token must have been issued to one of the ``audiences``
+        registered for that portal, and must be fresh — ``iat`` within
+        ``max_age`` seconds — so an old token lifted from a log is useless.
+        """
+        if not audiences:
+            raise OidcError("no audience is registered for presented ID tokens")
+        claims = self._signed_claims(id_token)
+        self._check_claims(claims, audiences=audiences)
+        if int(time.time()) - int(claims.get("iat", 0)) > max_age + self._skew:
+            raise OidcError("ID token is too old to prove a current login")
+        return claims
+
+    def _signed_claims(self, id_token: str) -> dict[str, Any]:
         parts = id_token.split(".")
         if len(parts) != 3:
             raise OidcError("ID token is not a compact JWS")
@@ -302,25 +329,37 @@ class SwissIdClient:
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
         if not _verify_jws(key, algorithm, signing_input, signature):
             raise OidcError("ID token signature does not verify")
+        if not isinstance(claims, dict):
+            raise OidcError("ID token payload is not an object")
+        return claims
 
+    def _check_claims(
+        self, claims: dict[str, Any], *, audiences: tuple[str, ...]
+    ) -> None:
         now = int(time.time())
         if claims.get("iss") != self._config.issuer:
             raise OidcError("ID token issuer mismatch")
         audience = claims.get("aud")
-        audiences = audience if isinstance(audience, list) else [audience]
-        if self._config.client_id not in audiences:
+        presented = audience if isinstance(audience, list) else [audience]
+        matching = [a for a in presented if a in audiences]
+        if not matching:
             raise OidcError("ID token audience mismatch")
-        if len(audiences) > 1 and claims.get("azp") != self._config.client_id:
+        if len(presented) > 1 and claims.get("azp") not in audiences:
             raise OidcError("multi-audience ID token without matching azp")
-        if now - self._skew >= int(claims.get("exp", 0)):
+        try:
+            expires, issued = int(claims.get("exp", 0)), int(claims.get("iat", 0))
+        except (TypeError, ValueError) as exc:
+            raise OidcError("ID token times are not numbers") from exc
+        if now - self._skew >= expires:
             raise OidcError("ID token has expired")
-        if int(claims.get("iat", 0)) - self._skew > now:
+        if issued - self._skew > now:
             raise OidcError("ID token was issued in the future")
-        if claims.get("nonce") != nonce:
-            raise OidcError("ID token nonce mismatch")
         if not claims.get("sub"):
             raise OidcError("ID token carries no subject")
-        return claims
+
+    @property
+    def issuer(self) -> str:
+        return self._config.issuer
 
     def _find_key(self, kid: str | None, algorithm: str) -> Any:
         for refresh in (False, True):

@@ -65,6 +65,9 @@ class KeyPurpose(StrEnum):
     OTP_BINDING = "otp-binding"
     #: Encrypts document contents before they reach object storage.
     DOCUMENT_ENCRYPTION = "document-encryption"
+    #: Sealing IUA authorisation codes, so a code carries its own request
+    #: parameters and cannot be read or altered by the client holding it.
+    IUA_AUTHORIZATION_CODE = "iua-authorization-code"
 
 
 def b64u(raw: bytes) -> str:

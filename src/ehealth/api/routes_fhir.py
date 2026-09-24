@@ -30,7 +30,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
-from ehealth.api.deps import ContainerDep, CurrentUserDep, DbDep
+from ehealth.api.deps import ContainerDep, DbDep, DirectoryActorDep
 from ehealth.services.patient_directory import (
     EPR_SPID_OID,
     OID_URN,
@@ -114,8 +114,9 @@ def _parse_birthdate(raw: str | None) -> date | None:
 
 
 @router.get("/metadata")
-def capability_statement(container: ContainerDep):
+def capability_statement(request: Request, container: ContainerDep):
     """What this server supports, for conformance tooling. Public."""
+    api = f"{str(request.base_url).rstrip('/')}/{API_VERSION}"
     return _fhir(
         {
             "resourceType": "CapabilityStatement",
@@ -128,6 +129,38 @@ def capability_statement(container: ContainerDep):
             "rest": [
                 {
                     "mode": "server",
+                    # IUA (ITI-72): every interaction below takes an IUA
+                    # access token; the endpoints are in ITI-103 metadata.
+                    "security": {
+                        "service": [
+                            {
+                                "coding": [
+                                    {
+                                        "system": (
+                                            "http://terminology.hl7.org/"
+                                            "CodeSystem/restful-security-service"
+                                        ),
+                                        "code": "SMART-on-FHIR",
+                                    }
+                                ]
+                            }
+                        ],
+                        "extension": [
+                            {
+                                "url": (
+                                    "http://fhir-registry.smarthealthit.org/"
+                                    "StructureDefinition/oauth-uris"
+                                ),
+                                "extension": [
+                                    {
+                                        "url": "authorize",
+                                        "valueUri": f"{api}/iua/authorize",
+                                    },
+                                    {"url": "token", "valueUri": f"{api}/iua/token"},
+                                ],
+                            }
+                        ],
+                    },
                     "resource": [
                         {
                             "type": "Patient",
@@ -165,7 +198,7 @@ def capability_statement(container: ContainerDep):
 
 @router.get("/Patient/$ihe-pix")
 def pix_query(
-    user: CurrentUserDep,
+    actor: DirectoryActorDep,
     db: DbDep,
     container: ContainerDep,
     sourceIdentifier: Annotated[str, Query(max_length=200)],
@@ -175,7 +208,7 @@ def pix_query(
     try:
         patient_uid, found = container.directory.cross_reference(
             db,
-            user.actor,
+            actor,
             source_identifier=sourceIdentifier,
             target_systems=tuple(targetSystem or ()),
         )
@@ -202,7 +235,7 @@ def pix_query(
 @router.get("/Patient")
 def pdq_search(
     request: Request,
-    user: CurrentUserDep,
+    actor: DirectoryActorDep,
     db: DbDep,
     container: ContainerDep,
     identifier: Annotated[str | None, Query(max_length=200)] = None,
@@ -215,7 +248,7 @@ def pdq_search(
     try:
         records = container.directory.search(
             db,
-            user.actor,
+            actor,
             identifier=identifier,
             family=family,
             given=given,
@@ -250,7 +283,7 @@ MATCH_GRADE = "http://hl7.org/fhir/StructureDefinition/match-grade"
 @router.post("/Patient/$match")
 async def pdq_match(
     request: Request,
-    user: CurrentUserDep,
+    actor: DirectoryActorDep,
     db: DbDep,
     container: ContainerDep,
 ):
@@ -280,7 +313,7 @@ async def pdq_match(
     try:
         matches = container.directory.match(
             db,
-            user.actor,
+            actor,
             identifiers=[
                 f"{i.get('system', '')}|{i.get('value', '')}"
                 for i in patient.get("identifier") or []
@@ -321,12 +354,12 @@ async def pdq_match(
 @router.get("/Patient/{patient_id}")
 def pdq_read(
     patient_id: str,
-    user: CurrentUserDep,
+    actor: DirectoryActorDep,
     db: DbDep,
     container: ContainerDep,
 ):
     try:
-        record = container.directory.read(db, user.actor, patient_id)
+        record = container.directory.read(db, actor, patient_id)
     except DirectoryError as error:
         db.commit()
         return operation_outcome(error)

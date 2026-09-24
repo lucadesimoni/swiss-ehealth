@@ -28,15 +28,14 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from ehealth.api.deps import ContainerDep, CurrentUserDep, DbDep
+from ehealth.api.deps import AuditTrailReaderDep, ContainerDep, DbDep
 from ehealth.api.routes_fhir import FHIR_JSON, operation_outcome
 from ehealth.db import utcnow
 from ehealth.models.audit import AuditAction, AuditEvent
-from ehealth.security.tokens import Scope
 from ehealth.services.patient_directory import OID_URN, DirectoryError
 
 router = APIRouter(prefix="/fhir", tags=["fhir"])
@@ -178,16 +177,14 @@ def patient_audit_trail(
     request: Request,
     db: DbDep,
     container: ContainerDep,
-    user: CurrentUserDep,
+    reader: AuditTrailReaderDep,
     patient_identifier: Annotated[
         str, Query(alias="patient.identifier", max_length=200)
     ],
     date_: Annotated[list[str] | None, Query(alias="date")] = None,
     count: Annotated[int, Query(alias="_count", ge=1, le=500)] = 100,
 ):
-    try:
-        user.require_scope(Scope.AUDIT_READ)
-    except HTTPException:
+    if not reader.may_read_audit:
         return operation_outcome(
             DirectoryError(403, "forbidden", "audit:read is required")
         )
@@ -196,7 +193,7 @@ def patient_audit_trail(
         lower, upper = _date_bounds(date_ or [])
     except DirectoryError as error:
         return operation_outcome(error)
-    if patient is None or patient.uid != user.claims.subject_uid:
+    if patient is None or patient.uid != reader.subject_uid:
         # Only your own trail. "Somebody else" and "nobody" answer alike.
         return operation_outcome(
             DirectoryError(403, "forbidden", "only the patient may read this trail")

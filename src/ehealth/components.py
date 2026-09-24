@@ -171,11 +171,14 @@ COMPONENTS: tuple[Component, ...] = (
         name="interop",
         tier="module",
         summary=(
-            "Patient identity lookups for other EPD systems: IHE PIXm "
-            "(ITI-83) and PDQm (ITI-78) as FHIR, per the CH EPR FHIR guide."
+            "The national FHIR interfaces of the CH EPR FHIR guide: PIXm, "
+            "PDQm, MHD, CH:ATC, and the IUA authorization server and "
+            "resource-server checks that protect them."
         ),
         paths=(
             "services/patient_directory.py",
+            "services/iua.py",
+            "api/routes_iua.py",
             "api/routes_fhir.py",
             "api/routes_mhd.py",
             "api/routes_atc.py",

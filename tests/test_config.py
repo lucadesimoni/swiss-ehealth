@@ -4,11 +4,37 @@
 
 from __future__ import annotations
 
-import pytest
+import hashlib
 
-from ehealth.config import DataRegion, Environment, Settings, generate_root_key
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from ehealth.config import (
+    DataRegion,
+    Environment,
+    IuaClientSettings,
+    Settings,
+    generate_root_key,
+)
 from ehealth.security.crypto import KeyPurpose, b64u_decode
 from ehealth.security.oidc import MockIdentityProvider, OidcError
+
+_IUA_KEY = ec.generate_private_key(ec.SECP256R1())
+IUA_KEY_PEM = _IUA_KEY.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+).decode()
+CLIENT_PUBLIC_PEM = (
+    ec.generate_private_key(ec.SECP256R1())
+    .public_key()
+    .public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    .decode()
+)
+SECRET_HASH = hashlib.sha256(b"a-long-random-client-secret").hexdigest()
 
 PROD = dict(
     environment=Environment.PRODUCTION,
@@ -21,6 +47,8 @@ PROD = dict(
     document_store_path="/srv/ehealth/documents",
     issuer="https://dossier.example.ch",
     database_url="postgresql+psycopg://user@db.local/ehealth",
+    iua_signing_key_pem=IUA_KEY_PEM,
+    iua_home_community_oid="2.16.756.5.30.1.999.2",
 )
 
 
@@ -76,6 +104,37 @@ class TestProductionHardening:
         with pytest.raises(ValueError, match="admin API key"):
             Settings(**{**PROD, "admin_api_key": "short"})
 
+    def test_refuses_an_ephemeral_iua_signing_key(self):
+        """Every IUA token would stop verifying at the next restart."""
+        with pytest.raises(ValueError, match="iua_signing_key_pem"):
+            Settings(**{**PROD, "iua_signing_key_pem": ""})
+
+    def test_refuses_unsigned_iua_token_requests(self):
+        with pytest.raises(ValueError, match="RFC 9421"):
+            Settings(**{**PROD, "iua_require_request_signatures": False})
+
+    def test_refuses_the_placeholder_home_community(self):
+        with pytest.raises(ValueError, match="iua_home_community_oid"):
+            Settings(**{**PROD, "iua_home_community_oid": "2.999.756.2"})
+
+    def test_refuses_an_iua_client_without_a_signing_key(self):
+        client = IuaClientSettings(
+            client_id="portal",
+            client_secret_sha256=SECRET_HASH,
+            redirect_uris=("https://portal.example.ch/cb",),
+        )
+        with pytest.raises(ValueError, match="public_key_pem is required"):
+            Settings(**{**PROD, "iua_clients": (client,)})
+
+    def test_accepts_a_registered_signing_iua_client(self):
+        client = IuaClientSettings(
+            client_id="portal",
+            client_secret_sha256=SECRET_HASH,
+            redirect_uris=("https://portal.example.ch/cb",),
+            public_key_pem=CLIENT_PUBLIC_PEM,
+        )
+        assert Settings(**{**PROD, "iua_clients": (client,)}).iua_clients
+
     def test_reports_every_problem_at_once(self):
         with pytest.raises(ValueError) as excinfo:
             Settings(
@@ -86,6 +145,61 @@ class TestProductionHardening:
             )
         message = str(excinfo.value)
         assert "ROOT_KEY" in message and "mock identity provider" in message
+
+
+class TestIuaClients:
+    def test_the_secret_is_configured_only_as_a_hash(self):
+        with pytest.raises(ValueError, match="64 hex"):
+            IuaClientSettings(client_id="portal", client_secret_sha256="s3cret")
+
+    def test_a_technical_user_needs_the_responsible_gln(self):
+        with pytest.raises(ValueError, match="technical_user_gln"):
+            IuaClientSettings(
+                client_id="archive",
+                client_secret_sha256=SECRET_HASH,
+                grant_types=("client_credentials",),
+            )
+
+    def test_the_code_flow_needs_a_registered_redirect(self):
+        with pytest.raises(ValueError, match="redirect_uris"):
+            IuaClientSettings(client_id="portal", client_secret_sha256=SECRET_HASH)
+
+    def test_unknown_grant_types_are_refused(self):
+        with pytest.raises(ValueError, match="unknown grant types"):
+            IuaClientSettings(
+                client_id="portal",
+                client_secret_sha256=SECRET_HASH,
+                grant_types=("password",),
+            )
+
+    def test_client_ids_are_unique(self):
+        client = IuaClientSettings(
+            client_id="portal",
+            client_secret_sha256=SECRET_HASH,
+            redirect_uris=("https://portal.example.ch/cb",),
+        )
+        with pytest.raises(ValueError, match="unique"):
+            Settings(iua_clients=(client, client))
+
+    def test_a_weak_request_signing_key_is_refused(self):
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        weak = (
+            rsa.generate_private_key(public_exponent=65537, key_size=1024)  # noqa: S505
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode()
+        )
+        with pytest.raises(ValueError, match="2048"):
+            IuaClientSettings(
+                client_id="portal",
+                client_secret_sha256=SECRET_HASH,
+                redirect_uris=("https://portal.example.ch/cb",),
+                public_key_pem=weak,
+            )
 
 
 class TestTokenLifetimes:

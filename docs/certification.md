@@ -97,6 +97,8 @@ see the evidence, not just the claim.
 | Traceable releases: which code wrote which record | Yes: signed build label on every audit entry, and the release and component ledgers | `docs/versioning.md` |
 | Schema changes that can't silently corrupt data | Yes: migrations, a boot guard in both directions, a drift check, all run on PostgreSQL in CI | `docs/migrations.md` |
 | Patient identity for other systems (PIXm, PDQm) | Yes, over FHIR | `docs/interoperability.md` |
+| Documents over FHIR (MHD), patient audit trail (CH:ATC) | Yes | `tests/test_documents_mhd.py`, `tests/test_audit_fhir.py` |
+| IUA access tokens: signed client requests, consent re-evaluated per request | Yes (ITI-71/72/103) | `tests/test_iua.py`, `tests/test_httpsig.py` |
 
 ## What this repository cannot cover
 
@@ -138,8 +140,8 @@ what:
 
 | # | Work | Why it comes here |
 |---|---|---|
-| 1 | **IUA** access tokens (ITI-71/72, CH:ATC) | Every other profile is authorised with them. Without them no other community can call these endpoints. |
-| 2 | **Document storage**, then **MHD** (ITI-65/66/67/68) | Nothing can be exchanged until documents can be stored. |
+| 1 | ~~**IUA** access tokens (ITI-71/72/103)~~ | **Done** for tokens this system issues. Remaining: assistant/representative roles, trust in other communities' authorization servers. |
+| 2 | ~~**Document storage**, then **MHD** (ITI-65/67/68)~~ | **Done.** ITI-66 and metadata update remain. |
 | 3 | **XDS.b / XCA** (ITI-18/41/43, ITI-38/39) and **XCPD** (ITI-55) | Communities still exchange with each other this way. It's the largest single piece of work. |
 | 4 | **PIX V3 / PDQ V3** (ITI-44/45/47) | The SOAP forms of the patient-identity transactions, for partners not yet on FHIR |
 | 5 | **ATNA** (ITI-20) | Audit records in the standard form. The internal trail already holds the content, so this is a matter of transport and format. |
@@ -194,7 +196,7 @@ national exchange formats with a focus on FHIR, the DigiSanté terminology
 server, and **AGOV login with or without the e-ID (beta)**. The next one to
 plan for is **2027**. Register as soon as the call opens, and prepare these
 test profiles against the eHealth Suisse reference environment:
-PIXm/PDQm (including `$match`), MHD, CH:ATC and, once built, IUA. Also test
+PIXm/PDQm (including `$match`), MHD, CH:ATC and IUA. Also test
 the AGOV login, which is where identification is heading.
 
 ## First steps that don't wait for anything

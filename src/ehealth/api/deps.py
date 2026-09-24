@@ -20,6 +20,7 @@ from ehealth.security.tokens import Scope, TokenClaims
 from ehealth.services.access import AccessError, AuthorizedAccess
 from ehealth.services.audit import ActorContext
 from ehealth.services.auth import AuthError
+from ehealth.services.iua import IuaAccess, IuaError, looks_like_iua_token
 
 
 def container_dep() -> Container:
@@ -186,3 +187,162 @@ def capability_access(required_scope: Scope):
             ) from exc
 
     return dependency
+
+
+# --------------------------------------------------------------------------
+# The national FHIR interfaces: IUA tokens (CH EPR FHIR v5.0.0, ITI-72)
+# --------------------------------------------------------------------------
+
+
+def _bearer_value(authorization: str | None) -> str | None:
+    if authorization and authorization[:7].lower() == "bearer ":
+        return authorization[7:].strip() or None
+    return None
+
+
+def _unauthenticated(error: str = "invalid_token") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="not authenticated",
+        headers={"WWW-Authenticate": f'Bearer error="{error}"'},
+    )
+
+
+def _iua(
+    container: Container,
+    db: Session,
+    token: str,
+    *,
+    scope: Scope,
+    extended: bool,
+    base: ActorContext,
+) -> IuaAccess:
+    try:
+        return container.iua.authorize_request(
+            db, token, required_scope=scope, extended=extended, request_context=base
+        )
+    except IuaError as exc:
+        # The ledger holds the reason; the caller learns nothing about the
+        # record from a refusal.
+        raise _unauthenticated() from exc
+
+
+#: What the MHD transactions authorise with: an IUA token, or this system's
+#: own capability. Both expose ``dossier_uid``, ``max_level``, ``actor`` and
+#: ``subject_uid``, which is all the dossier services read.
+DocumentAccess = AuthorizedAccess | IuaAccess
+
+
+def document_access(required_scope: Scope):
+    """MHD authorisation (ITI-65/67/68).
+
+    ``Authorization: Bearer <IUA extended access token>`` is the national
+    interface. A capability in ``X-Capability`` — alongside this system's
+    own session token in ``Authorization``, for the same person — stays
+    accepted for this system's own portal. Presenting both kinds at once is
+    refused: which authority a request used must never be ambiguous.
+    """
+
+    def dependency(
+        db: DbDep,
+        container: ContainerDep,
+        base: RequestContextDep,
+        authorization: Annotated[str | None, Header()] = None,
+        x_capability: Annotated[str | None, Header()] = None,
+        x_holder_key: Annotated[str | None, Header()] = None,
+    ) -> DocumentAccess:
+        token = _bearer_value(authorization)
+        if token is not None and looks_like_iua_token(token):
+            if x_capability:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="present an IUA token or a capability, not both",
+                )
+            return _iua(
+                container, db, token, scope=required_scope, extended=True, base=base
+            )
+        if not x_capability or token is None:
+            raise _unauthenticated("invalid_request")
+        try:
+            claims, _ = container.auth.verify_session_token(db, token)
+        except AuthError as exc:
+            raise _unauthenticated() from exc
+        try:
+            access = container.access.authorize(
+                db,
+                x_capability,
+                required_scope=required_scope,
+                holder_key_b64=x_holder_key,
+                request_context=base,
+            )
+        except AccessError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="access denied"
+            ) from exc
+        if access.subject_uid != claims.subject_uid:
+            # A capability is personal: the session presenting it must be
+            # its grantee's.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="access denied"
+            )
+        return access
+
+    return dependency
+
+
+def directory_actor(
+    db: DbDep,
+    container: ContainerDep,
+    base: RequestContextDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> ActorContext:
+    """PIXm/PDQm: an IUA basic (or extended) token, or a session token.
+
+    Either way the directory then requires the healthcare-professional role;
+    the token only says who is asking.
+    """
+    token = _bearer_value(authorization)
+    if token is None:
+        raise _unauthenticated("invalid_request")
+    if looks_like_iua_token(token):
+        return _iua(
+            container, db, token, scope=Scope.PERSON_READ, extended=False, base=base
+        ).actor
+    return current_user(token, db, container, base).actor
+
+
+DirectoryActorDep = Annotated[ActorContext, Depends(directory_actor)]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditTrailReader:
+    """Who is asking for a patient audit trail (CH:ATC), and whether the
+    authority they present covers ``audit:read``."""
+
+    subject_uid: str
+    may_read_audit: bool
+
+
+def audit_trail_reader(
+    db: DbDep,
+    container: ContainerDep,
+    base: RequestContextDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> AuditTrailReader:
+    token = _bearer_value(authorization)
+    if token is None:
+        raise _unauthenticated("invalid_request")
+    if looks_like_iua_token(token):
+        # ITI-81 takes an extended token; only the patient role carries
+        # audit:read, so a professional's token is refused here.
+        access = _iua(
+            container, db, token, scope=Scope.AUDIT_READ, extended=True, base=base
+        )
+        return AuditTrailReader(access.subject_uid, True)
+    user = current_user(token, db, container, base)
+    return AuditTrailReader(
+        user.claims.subject_uid, user.claims.has_scope(Scope.AUDIT_READ)
+    )
+
+
+AuditTrailReaderDep = Annotated[AuditTrailReader, Depends(audit_trail_reader)]

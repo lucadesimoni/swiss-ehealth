@@ -172,6 +172,16 @@ done by an authority or its mandated operator, and the values above are
 placeholders until then. The Projectathon 2026 already offered AGOV (with and
 without the beta e-ID) as a test. That is the place to confirm them.
 
+## ID tokens presented by a portal (IUA)
+
+A portal that signs its users in itself can present the resulting ID token to
+this system's IUA token endpoint (see
+[`interoperability.md`](interoperability.md#implemented-iua-access-tokens)).
+The provider must be configured here as a real OIDC provider (not the mock),
+and the token is held to that provider's policy, with one addition: the
+level must be in **`mfa_acr`**, because on this path no emailed code can be
+added. A provider without `mfa_acr` can't be used for IUA.
+
 ## Not implemented yet
 
 - **SAML.** Some professional and community identity providers speak only

@@ -121,6 +121,93 @@ class IdentityProviderSettings(BaseModel):
         return problems
 
 
+_CLIENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+_GLN = re.compile(r"^\d{13}$")
+
+
+class IuaClientSettings(BaseModel):
+    """One IUA Authorization Client registered at onboarding.
+
+    CH EPR FHIR (IUA, security considerations): a portal or primary system is
+    identified by its ``client_id`` and secret, and every request it makes to
+    the token endpoint is signed with a key registered here. The secret is
+    configured as its SHA-256 hash, so the configuration never holds a value
+    that would let someone impersonate the client.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    client_id: str
+    #: Human-readable name for the audit trail.
+    name: str = ""
+    #: Hex SHA-256 of the client secret. Secrets must be random and long
+    #: (the onboarding script issues 32 bytes), which is what makes an
+    #: unsalted hash adequate here.
+    client_secret_sha256: str = Field(default="", repr=False)
+    #: PEM public key for the RFC 9421 request signatures (RSA ≥ 2048,
+    #: EC P-256 or Ed25519), and the key id the client puts in ``keyid``.
+    public_key_pem: str = ""
+    public_key_id: str = ""
+    redirect_uris: tuple[str, ...] = ()
+    #: ``authorization_code``, ``client_credentials``,
+    #: ``urn:ietf:params:oauth:grant-type:jwt-bearer``.
+    grant_types: tuple[str, ...] = ("authorization_code",)
+    #: Technical User option: the GLN of the legally responsible healthcare
+    #: professional this client writes on behalf of. Required for
+    #: ``client_credentials``, and a request naming another GLN is refused.
+    technical_user_gln: str = ""
+    #: The client IDs this system is registered under at the identity
+    #: providers. An ID token presented as ``client_assertion`` must have been
+    #: issued to one of them, so a token from an unrelated application is
+    #: not accepted as proof that the user is at this client.
+    idp_client_ids: tuple[str, ...] = ()
+
+    @field_validator("client_id")
+    @classmethod
+    def _valid_client_id(cls, value: str) -> str:
+        if not _CLIENT_ID.match(value):
+            raise ValueError(f"invalid IUA client_id {value!r}")
+        return value
+
+    @field_validator("client_secret_sha256")
+    @classmethod
+    def _valid_hash(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value and not _SHA256_HEX.match(value):
+            raise ValueError("client_secret_sha256 must be 64 hex characters")
+        return value
+
+    @model_validator(mode="after")
+    def _consistent(self) -> IuaClientSettings:
+        known = {
+            "authorization_code",
+            "client_credentials",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        }
+        unknown = set(self.grant_types) - known
+        if unknown:
+            raise ValueError(f"{self.client_id}: unknown grant types {sorted(unknown)}")
+        if not self.client_secret_sha256:
+            raise ValueError(f"{self.client_id}: client_secret_sha256 is required")
+        if "authorization_code" in self.grant_types and not self.redirect_uris:
+            raise ValueError(
+                f"{self.client_id}: authorization_code needs redirect_uris"
+            )
+        if "client_credentials" in self.grant_types and not _GLN.match(
+            self.technical_user_gln
+        ):
+            raise ValueError(
+                f"{self.client_id}: client_credentials needs the technical_user_gln "
+                f"of the responsible healthcare professional"
+            )
+        if self.public_key_pem:
+            from ehealth.security.httpsig import load_public_key
+
+            load_public_key(self.public_key_pem)
+        return self
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="EHEALTH_", env_file=".env", extra="ignore"
@@ -211,6 +298,28 @@ class Settings(BaseSettings):
     #: matches more than this is too broad to be a lookup of one person.
     pdq_max_results: int = 10
 
+    # -- IUA (CH EPR FHIR v5.0.0) -----------------------------------------
+    #: Issuer of IUA access tokens. Defaults to ``<issuer>/iua``.
+    iua_issuer: str = ""
+    #: The audience IUA tokens are issued for and checked against: this
+    #: system's FHIR base URL. Defaults to ``<issuer>/v1/fhir``.
+    iua_audience: str = ""
+    #: PEM private key that signs IUA tokens: RSA ≥ 2048 (RS256, which every
+    #: IUA resource server must support) or EC P-256 (ES256). Required in
+    #: production; an ephemeral RSA key is generated otherwise.
+    iua_signing_key_pem: str = Field(default="", repr=False)
+    iua_signing_key_id: str = "iua-1"
+    iua_token_ttl_seconds: int = 300
+    iua_code_ttl_seconds: int = 60
+    #: How old an ID token presented as the user's authentication may be.
+    iua_max_id_token_age_seconds: int = 600
+    #: OID of this community (the ``home_community_id`` claim).
+    iua_home_community_oid: str = "2.999.756.2"
+    #: The guide requires signed token requests (RFC 9421). Only a test
+    #: setup may switch this off.
+    iua_require_request_signatures: bool = True
+    iua_clients: tuple[IuaClientSettings, ...] = ()
+
     #: Shared secret for the enrolment/administration endpoints, which are
     #: called by back-office systems rather than by a logged-in person.
     #: Empty disables those endpoints entirely, which is the right default.
@@ -258,6 +367,21 @@ class Settings(BaseSettings):
                     "community_patient_id_oid is the example placeholder; set "
                     "the OID registered for this community"
                 )
+            if not self.iua_signing_key_pem:
+                problems.append(
+                    "iua_signing_key_pem must be set; an ephemeral key would "
+                    "invalidate every IUA token on restart"
+                )
+            if not self.iua_require_request_signatures:
+                problems.append("IUA token requests must be signed (RFC 9421)")
+            if self.iua_home_community_oid.startswith("2.999"):
+                problems.append("iua_home_community_oid is the example placeholder")
+            for iua_client in self.iua_clients:
+                if not iua_client.public_key_pem:
+                    problems.append(
+                        f"IUA client {iua_client.client_id}: public_key_pem is "
+                        f"required to verify its signed requests"
+                    )
             if self.admin_api_key and len(self.admin_api_key) < 32:
                 problems.append("admin API key must be at least 32 characters")
             if problems:
@@ -267,6 +391,9 @@ class Settings(BaseSettings):
         names = [provider.name for provider in self.identity_providers()]
         if len(names) != len(set(names)):
             raise ValueError(f"identity provider names must be unique: {names}")
+        client_ids = [client.client_id for client in self.iua_clients]
+        if len(client_ids) != len(set(client_ids)):
+            raise ValueError(f"IUA client ids must be unique: {client_ids}")
         if self.max_token_ttl_seconds < max(
             self.session_token_ttl_seconds,
             self.capability_token_ttl_seconds,
@@ -277,6 +404,14 @@ class Settings(BaseSettings):
         return self
 
     # -- derived ----------------------------------------------------------
+
+    @property
+    def iua_token_issuer(self) -> str:
+        return self.iua_issuer or f"{self.issuer.rstrip('/')}/iua"
+
+    @property
+    def iua_token_audience(self) -> str:
+        return self.iua_audience or f"{self.issuer.rstrip('/')}/v1/fhir"
 
     def identity_providers(self) -> tuple[IdentityProviderSettings, ...]:
         """Every configured provider, SwissID first."""

@@ -24,6 +24,38 @@ the diff:
 
 ### Added
 
+**IUA access tokens (CH EPR FHIR v5.0.0).** The national FHIR interfaces are
+now authorised the way the guide requires. This system is the IUA
+Authorization Server (ITI-71 token issuance, ITI-103 metadata at
+`/v1/fhir/.well-known/smart-configuration`) and the Resource Server (ITI-72)
+for MHD, PIXm/PDQm and CH:ATC.
+
+- Grants: `client_credentials` for archives (Technical User, TCU/AUTO, only
+  on behalf of the GLN registered at onboarding), `authorization_code` with
+  mandatory PKCE, and `jwt-bearer`. The user is identified by this system's
+  own login session or by an ID token the portal presents. That ID token has
+  to be signed by a configured provider, issued to the portal, fresh, linked
+  to an account here, and at a two-factor level.
+- Every token request must be signed by the client with the key registered
+  for it (RFC 9421 HTTP message signatures with an RFC 9530 content digest,
+  60 s maximum). Client secrets are configured only as SHA-256 hashes.
+- Tokens are signed JWTs (RS256, or ES256), with the guide's `ihe_iua`,
+  `ch_epr` and `ch_delegation` claims, and are registered so they can be
+  revoked. Replaying an authorisation code revokes what was issued from it.
+- On every request, the resource server re-evaluates the patient's consent,
+  checks that the professional's licence is still live, and checks that the
+  token names the record being touched. The role caps what a token can do:
+  a technical user can only write, a professional can't read the patient's
+  audit trail, and a patient reaches only their own record.
+- Not supported and refused explicitly: the assistant and representative
+  roles, SMART `launch`, and tokens from other communities.
+
+Production now requires `EHEALTH_IUA_SIGNING_KEY_PEM`, a real
+`EHEALTH_IUA_HOME_COMMUNITY_OID`, and a signing key for every registered
+client. MHD also still accepts this system's capability tokens, but only
+together with a session token of the same person (before, the session and
+the capability weren't compared).
+
 **Document storage.** Document contents are now actually stored. Until now
 only their SHA-256 was recorded, so a published document could never be read
 back. Contents are encrypted with AES-256-GCM under a key derived only for
