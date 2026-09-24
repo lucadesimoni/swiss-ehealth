@@ -192,6 +192,14 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_from: str = "noreply@dossier.example.ch"
 
+    # -- documents --------------------------------------------------------
+    #: Directory for encrypted document contents. Empty keeps them in memory,
+    #: which is only acceptable for tests and a throwaway ``make run``;
+    #: production refuses it. Contents are AES-GCM encrypted before they are
+    #: written, so the directory (or the S3 bucket mounted there) holds only
+    #: ciphertext.
+    document_store_path: str = ""
+
     # -- interoperability -------------------------------------------------
     #: OID of this community's patient identifier domain (the MPI-PID
     #: assigning authority), as registered with eHealth Suisse / refdata. The
@@ -240,6 +248,11 @@ class Settings(BaseSettings):
                 problems.append("issuer must be https")
             if self.database_url.startswith("sqlite"):
                 problems.append("sqlite is not a supported production database")
+            if not self.document_store_path:
+                problems.append(
+                    "document_store_path must be set; in-memory document "
+                    "storage loses every document on restart"
+                )
             if self.community_patient_id_oid.startswith("2.999"):
                 problems.append(
                     "community_patient_id_oid is the example placeholder; set "

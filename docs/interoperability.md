@@ -59,6 +59,29 @@ filled.
   (EPDG) keeps the AHV number out of the patient record, and accepting it
   here would allow exactly the cross-referencing the law exists to prevent.
 
+## Implemented: documents over FHIR (MHD)
+
+| Transaction | Endpoint |
+|---|---|
+| **ITI-65** Provide Document Bundle | `POST /v1/fhir` with a `transaction` Bundle: one SubmissionSet `List`, one or more `DocumentReference`, and the `Binary` each points to |
+| **ITI-67** Find Document References | `GET /v1/fhir/DocumentReference?patient.identifier=urn:oid:…\|…[&status=current,superseded,entered-in-error]`, and `GET /v1/fhir/DocumentReference/{id}` |
+| **ITI-68** Retrieve Document | `GET /v1/fhir/Binary/{id}`, the URL in each attachment |
+
+Access works exactly as for the rest of the dossier: a capability token
+(`X-Capability`) for *that patient's* dossier, with `document:read` or
+`document:write`. A token for one patient's dossier can't be pointed at
+another patient by changing the identifier in the query. The EPD
+confidentiality levels are applied inside the database query: a document
+above the caller's level is not returned, counted, or retrievable by id. Each
+document must carry a CH EPR confidentiality code (SNOMED CT 17621005 /
+263856008 / 1141000195107); one without a code is refused, rather than filed
+at the most visible level by default.
+
+Contents are encrypted with AES-256-GCM before they reach storage, tied to
+the document's id, and checked against the SHA-256 recorded at write time on
+every read. Storage is treated as untrusted: see `services/blobstore.py`.
+Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
+
 ## Not implemented yet
 
 In roughly the order a community needs them:
@@ -66,7 +89,7 @@ In roughly the order a community needs them:
 | Profile | Purpose | Status |
 |---|---|---|
 | **IUA** (ITI-71/72, CH:ATC extensions) | Access tokens for the FHIR endpoints, carrying the user's role, purpose of use and the patient in the standard form other communities expect | Not implemented. The FHIR endpoints accept this system's own session token for a professional, which other communities cannot issue. |
-| **MHD** (ITI-65, 66, 67, 68) | Publishing and retrieving documents over FHIR | Not implemented. There is no document storage yet. |
+| **MHD ITI-66**, metadata update (ITI-105/106) | Finding submission sets; changing document metadata | Not implemented. ITI-65, 67 and 68 are above. |
 | **XDS.b / XCA** (ITI-18, 41, 43; ITI-38, 39) | The SOAP-based document exchange the EPD network still runs on between communities | Not implemented. This is the largest single piece of work. |
 | **XCPD** (ITI-55) | Finding a patient in *other* communities | Not implemented |
 | **PIX V3 / PDQ V3** (ITI-44, 45, 47) | The HL7v3 SOAP forms of the patient-identity transactions, still used between communities | Not implemented. Only the FHIR forms above exist. |

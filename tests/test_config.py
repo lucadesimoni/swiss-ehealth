@@ -18,6 +18,7 @@ PROD = dict(
     swissid_client_secret="secret",
     swissid_accepted_acr=("loa-2", "loa-3"),
     community_patient_id_oid="2.16.756.5.30.1.999.1",
+    document_store_path="/srv/ehealth/documents",
     issuer="https://dossier.example.ch",
     database_url="postgresql+psycopg://user@db.local/ehealth",
 )

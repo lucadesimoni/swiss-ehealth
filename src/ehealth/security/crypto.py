@@ -63,6 +63,8 @@ class KeyPurpose(StrEnum):
     TOKEN_SIGNING = "token-signing"
     #: Hashes one-time second-factor codes and refresh tokens.
     OTP_BINDING = "otp-binding"
+    #: Encrypts document contents before they reach object storage.
+    DOCUMENT_ENCRYPTION = "document-encryption"
 
 
 def b64u(raw: bytes) -> str:

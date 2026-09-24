@@ -22,6 +22,25 @@ the diff:
 
 ## [Unreleased]
 
+### Added
+
+**Document storage.** Document contents are now actually stored. Until now
+only their SHA-256 was recorded, so a published document could never be read
+back. Contents are encrypted with AES-256-GCM under a key derived only for
+this purpose, tied to the document's id (a blob moved to another document
+fails to decrypt), and checked against the recorded SHA-256 on every read.
+Storage is treated as untrusted in both directions. `FileSystemBlobStore`
+writes atomically, never overwrites, and refuses keys that could escape its
+directory. Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
+`GET /v1/dossiers/{uid}/documents/{doc}/content` returns the bytes.
+
+**IHE MHD over FHIR**: ITI-65 (publish a transaction Bundle), ITI-67 (find
+DocumentReferences) and ITI-68 (retrieve the Binary), per the CH EPR FHIR
+guide. Authorised by the dossier capability token as elsewhere. The EPD
+confidentiality levels are filtered in the query, and a document without a
+confidentiality code is refused. Mutation-checked: removing the
+confidentiality filter or the encryption makes tests fail.
+
 ## [0.7.0] — 2026-09-23
 
 Login is ready to be tested against real identity providers, and other EPD

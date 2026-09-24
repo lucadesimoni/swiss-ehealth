@@ -13,7 +13,7 @@ import base64
 import binascii
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 
 from ehealth.api.deps import (
     ContainerDep,
@@ -204,6 +204,38 @@ def read_document(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     return _document_out(document)
+
+
+@router.get("/dossiers/{dossier_uid}/documents/{document_uid}/content")
+def read_document_content(
+    dossier_uid: Annotated[str, Path()],
+    document_uid: Annotated[str, Path()],
+    db: DbDep,
+    container: ContainerDep,
+    access: DocumentReadAccess,
+):
+    """The document's bytes, decrypted and checked against the stored hash."""
+    if access.dossier_uid != dossier_uid:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+    try:
+        document, content = container.dossiers.read_content(db, access, document_uid)
+    except DossierError as exc:
+        db.commit()  # keep the audit record of a refused or failed read
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return Response(
+        content=content,
+        media_type=document.mime_type,
+        headers={
+            # Never let a browser guess a type for health data, and never let
+            # an intermediary keep a copy.
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+            "Content-Disposition": "attachment",
+            "Digest": f"sha-256={document.content_hash}",
+        },
+    )
 
 
 @router.post(

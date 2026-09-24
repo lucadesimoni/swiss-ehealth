@@ -424,9 +424,9 @@ src/ehealth/
 
 Stated plainly so nobody mistakes a stub for a feature:
 
-- **Document storage.** `DossierDocument` records the SHA-256 and a storage
-  reference; the blob itself belongs in object storage. The hash is what makes
-  that storage untrusted-by-default.
+- **An S3 backend for documents.** Contents are stored encrypted on a local
+  or mounted file system (`EHEALTH_DOCUMENT_STORE_PATH`). An S3-compatible
+  backend on a Swiss provider needs only the three methods of `BlobBackend`.
 - **Most of the IHE profiles** a real EPD community must speak to join the
   national network: IUA access tokens, document exchange (MHD, XDS.b/XCA),
   XCPD and ATNA. Patient identity over FHIR (PIXm, PDQm) is implemented; the

@@ -30,6 +30,7 @@ from ehealth.models.clinical import (
 from ehealth.models.core import Person, PersonRoleKind
 from ehealth.services.access import AuthorizedAccess
 from ehealth.services.audit import ActorContext, AuditLedger
+from ehealth.services.blobstore import BlobError, DocumentContentStore
 from ehealth.services.changelog import ChangeTracker, snapshot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -62,11 +63,13 @@ class DossierService:
         persons: PersonService | None = None,
         *,
         retention_years: int = 20,
+        content: DocumentContentStore | None = None,
     ) -> None:
         self._ledger = ledger
         self._tracker = tracker
         self._persons = persons
         self._retention_years = retention_years
+        self._content = content
 
     # -- lifecycle --------------------------------------------------------
 
@@ -163,8 +166,15 @@ class DossierService:
             raise DossierError("dossier is not active")
 
         content_hash = hashlib.sha256(document.content).hexdigest()
+        document_uid = new_uid("doc")
+        storage_ref = document.storage_ref
+        if self._content is not None:
+            # Stored before the row is committed: if the transaction later
+            # fails, an orphaned encrypted blob is harmless, whereas a row
+            # pointing at content that was never written is a broken record.
+            storage_ref = self._content.store(document_uid, document.content)
         record = DossierDocument(
-            uid=new_uid("doc"),
+            uid=document_uid,
             dossier_uid=dossier.uid,
             title=document.title,
             document_class=document.document_class,
@@ -179,7 +189,7 @@ class DossierService:
             author_organization_uid=self._organization_of(session, author.uid),
             content_hash=content_hash,
             content_size=len(document.content),
-            storage_ref=document.storage_ref,
+            storage_ref=storage_ref,
             supersedes_uid=document.supersedes_uid,
             service_start=document.service_start,
             service_end=document.service_end,
@@ -291,6 +301,36 @@ class DossierService:
             detail={"confidentiality": document.confidentiality},
         )
         return document
+
+    def read_content(
+        self, session: Session, access: AuthorizedAccess, document_uid: str
+    ) -> tuple[DossierDocument, bytes]:
+        """The document's bytes, after the same checks as :meth:`read_document`.
+
+        Verified against the SHA-256 recorded at write time, so storage that
+        serves different bytes than were written is detected, not believed.
+        """
+        document = self.read_document(session, access, document_uid)
+        if self._content is None or not (document.storage_ref or "").startswith(
+            "blob:"
+        ):
+            raise DossierError("this document has no stored content")
+        try:
+            content = self._content.load(
+                document.uid, expected_sha256=document.content_hash
+            )
+        except BlobError as exc:
+            self._ledger.append(
+                session,
+                actor=access.actor,
+                action=AuditAction.ACCESS_DENIED,
+                resource_type="dossier_document",
+                resource_uid=document_uid,
+                dossier_uid=access.dossier_uid,
+                detail={"reason": f"content integrity: {exc}"},
+            )
+            raise DossierError("document content failed its integrity check") from exc
+        return document, content
 
     def retract_document(
         self,

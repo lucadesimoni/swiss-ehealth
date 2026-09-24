@@ -173,13 +173,21 @@ COMPONENTS: tuple[Component, ...] = (
             "Patient identity lookups for other EPD systems: IHE PIXm "
             "(ITI-83) and PDQm (ITI-78) as FHIR, per the CH EPR FHIR guide."
         ),
-        paths=("services/patient_directory.py", "api/routes_fhir.py"),
+        paths=(
+            "services/patient_directory.py",
+            "api/routes_fhir.py",
+            "api/routes_mhd.py",
+        ),
     ),
     Component(
         name="dossier",
         tier="module",
         summary="The patient dossier and its documents.",
-        paths=("services/dossier.py", "api/routes_dossier.py"),
+        paths=(
+            "services/dossier.py",
+            "services/blobstore.py",
+            "api/routes_dossier.py",
+        ),
     ),
     Component(
         name="medication",

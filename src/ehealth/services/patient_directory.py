@@ -217,6 +217,15 @@ class PatientDirectory:
             active=person.status == PersonStatus.ACTIVE.value,
         )
 
+    def resolve(self, session: Session, identifier: str) -> Person | None:
+        """Resolve a ``urn:oid:…|value`` token to a patient, without auditing
+        or a role check. For callers that authorise by other means — a
+        capability token for that patient's dossier — and audit themselves.
+        """
+        oid, value = parse_token(identifier)
+        self._check_domain(oid, role="source")
+        return self._find(session, oid, value)
+
     # -- ITI-83: cross-reference ----------------------------------------------
 
     def cross_reference(

@@ -37,6 +37,11 @@ from ehealth.security.tokens import TokenService
 from ehealth.services.access import AccessService, ConsentService
 from ehealth.services.audit import AuditLedger
 from ehealth.services.auth import AssurancePolicy, AuthService, ConfiguredProvider
+from ehealth.services.blobstore import (
+    DocumentContentStore,
+    FileSystemBlobStore,
+    MemoryBlobStore,
+)
 from ehealth.services.changelog import ChangeTracker
 from ehealth.services.dossier import DossierService
 from ehealth.services.medication import MedicationCatalogue, MedicationService
@@ -157,7 +162,16 @@ def build_container(settings: Settings | None = None) -> Container:
         persons=persons,
         organizations=OrganizationService(ledger, tracker),
         dossiers=DossierService(
-            ledger, tracker, persons, retention_years=settings.dossier_retention_years
+            ledger,
+            tracker,
+            persons,
+            retention_years=settings.dossier_retention_years,
+            content=DocumentContentStore(
+                FileSystemBlobStore(settings.document_store_path)
+                if settings.document_store_path
+                else MemoryBlobStore(),
+                keyring,
+            ),
         ),
         catalogue=MedicationCatalogue(ledger, tracker),
         # The medication service asks the person registry whether the author
