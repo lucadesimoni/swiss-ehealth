@@ -438,6 +438,20 @@ Stated plainly so nobody mistakes a stub for a feature:
 - **Notification delivery** for emergency access and `notify_on_access`. The
   decision carries the flag; the transport is not written.
 
+## Ownership and supply chain
+
+The software cannot be made unhackable, and nothing here claims it is. What
+it does is make each layer of defence something a test checks:
+
+- every runtime dependency is pinned by hash;
+- CI audits the dependencies for known vulnerabilities and produces a bill
+  of materials (SBOM);
+- the CI actions themselves are pinned to exact commits.
+
+Swiss ownership is a legal and organisational step: a Swiss entity holding
+the copyright and the name, and Swiss Git hosting as the source of truth. See
+[`docs/sovereignty.md`](docs/sovereignty.md).
+
 ## Standards this follows
 
 EPDG/LEPD and EPDV (participation, access levels, the audit trail patients can

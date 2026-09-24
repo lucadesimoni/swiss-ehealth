@@ -17,13 +17,20 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE requirements.lock ./
 COPY src ./src
 
+# Every dependency is installed from requirements.lock with --require-hashes:
+# pinned by version *and* by the SHA-256 of the file. A package that changed
+# on the index — a compromised release re-uploaded under the same version, a
+# mirror serving something else — fails the build instead of shipping. The
+# application itself is then installed with --no-deps, so nothing it declares
+# can pull in an unpinned package behind the lockfile's back.
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
- && /opt/venv/bin/pip install . \
- && /opt/venv/bin/pip install "gunicorn>=22" "psycopg[binary]>=3.1"
+ && /opt/venv/bin/pip install --require-hashes --no-deps -r requirements.lock \
+ && /opt/venv/bin/pip install --no-deps --no-build-isolation . \
+ && /opt/venv/bin/pip check
 
 # --- runtime --------------------------------------------------------------
 FROM python:3.12-slim-bookworm AS runtime

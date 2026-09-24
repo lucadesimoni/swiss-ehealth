@@ -19,12 +19,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "pip-audit>=2.7", "uv>=0.5"]
 # The production driver. Kept optional so a development checkout and the test
 # suite's SQLite default need no PostgreSQL client library, but the Docker
 # image and CI both install it — production is PostgreSQL, and the config
 # refuses to start on SQLite there.
 postgres = ["psycopg[binary]>=3.1"]
+# The production process manager, installed in the container image.
+server = ["gunicorn>=22"]
 
 [build-system]
 requires = ["setuptools>=68"]

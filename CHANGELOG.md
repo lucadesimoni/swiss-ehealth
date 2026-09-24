@@ -34,6 +34,16 @@ writes atomically, never overwrites, and refuses keys that could escape its
 directory. Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
 `GET /v1/dossiers/{uid}/documents/{doc}/content` returns the bytes.
 
+**Supply chain.** `requirements.lock` pins every runtime dependency by
+version and SHA-256, and the Docker image installs only from it, with
+`--require-hashes`, then runs `pip check`. A new CI job, `supply-chain`,
+checks that the lockfile still matches `pyproject.toml`, fails on any known
+vulnerability in a runtime dependency (`pip-audit`), and publishes a
+CycloneDX SBOM for every commit. The CI actions are pinned to commit SHAs
+rather than movable tags. New targets: `make lock`, `make audit`.
+`docs/sovereignty.md` says what "non-hackable" and "Swiss-owned" can
+honestly mean and what is left to an organisation.
+
 **PDQm `$match` (ITI-119)**: `POST /v1/fhir/Patient/$match`, the
 patient-identification form that CH EPR FHIR v5.0.0 selects. The caller posts
 a Patient resource and gets back candidates, each with a score and a FHIR

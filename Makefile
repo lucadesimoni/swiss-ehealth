@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+
+.PHONY: lock audit
 .PHONY: install test test-verbose test-postgres lint format run seed keygen clean \
         version verify-version release record-release releases restore-tags \
         components release-component record-component-release \
@@ -37,6 +39,17 @@ test-postgres:
 	  echo 'usage: make test-postgres PGURL=postgresql+psycopg://user:pw@host:5432/db'; \
 	  exit 1; }
 	EHEALTH_TEST_DATABASE_URL="$(PGURL)" $(PY) -m pytest -q
+
+## Re-pin every runtime dependency by version and hash (after changing
+## pyproject.toml). Commit the result; the Docker build installs only this.
+lock:
+	$(VENV)/bin/uv pip compile pyproject.toml --extra postgres --extra server \
+	    --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+	    --no-header -o requirements.lock
+
+## Known vulnerabilities in the locked runtime dependencies.
+audit:
+	$(VENV)/bin/pip-audit --require-hashes --disable-pip -r requirements.lock
 
 lint:
 	$(PY) -m ruff check src tests migrations
