@@ -443,3 +443,111 @@ class TestReindex:
     def test_it_is_idempotent(self, container, db, patients):
         reindex(db, container.identity)
         assert reindex(db, container.identity)[0] == 0
+
+
+def match(client, headers, patient, **extra):
+    parameters = [
+        {"name": "resource", "resource": {"resourceType": "Patient", **patient}}
+    ]
+    parameters += [{"name": k, **v} for k, v in extra.items()]
+    return client.post(
+        "/v1/fhir/Patient/$match",
+        json={"resourceType": "Parameters", "parameter": parameters},
+        headers=headers,
+    )
+
+
+def grades(response) -> dict[str, tuple[float, str]]:
+    return {
+        e["resource"]["id"]: (
+            e["search"]["score"],
+            e["search"]["extension"][0]["valueCode"],
+        )
+        for e in response.json()["entry"]
+    }
+
+
+class TestPdqmMatch:
+    """ITI-119, the patient-identification form CH EPR FHIR v5 selects."""
+
+    def test_an_identifier_is_a_certain_match(self, client, professional, patients):
+        erika = patients["erika"]
+        response = match(
+            client,
+            professional,
+            {"identifier": [{"system": SPID, "value": erika.spid}]},
+        )
+        assert response.status_code == 200, response.text
+        assert grades(response) == {erika.uid: (1.0, "certain")}
+
+    def test_demographics_alone_are_never_certain(self, client, professional, patients):
+        """Two people can share a name and a birthday."""
+        response = match(
+            client,
+            professional,
+            {
+                "name": [{"family": "Müller", "given": ["Erika"]}],
+                "birthDate": "1980-05-17",
+            },
+        )
+        scored = grades(response)
+        assert scored[patients["erika"].uid] == (0.9, "probable")
+        assert scored[patients["erik"].uid] == (0.6, "possible")
+        assert next(iter(scored)) == patients["erika"].uid, "best first"
+
+    def test_only_certain_matches_drops_demographic_candidates(
+        self, client, professional, patients
+    ):
+        response = match(
+            client,
+            professional,
+            {"name": [{"family": "Müller"}], "birthDate": "1980-05-17"},
+            onlyCertainMatches={"valueBoolean": True},
+        )
+        assert response.json()["total"] == 0
+
+    def test_a_contradicting_gender_rules_a_candidate_out(
+        self, client, professional, patients
+    ):
+        response = match(
+            client,
+            professional,
+            {
+                "name": [{"family": "Müller"}],
+                "birthDate": "1980-05-17",
+                "gender": "male",
+            },
+        )
+        assert set(grades(response)) == {patients["erik"].uid}
+
+    def test_count_limits_the_answer(self, client, professional, patients):
+        response = match(
+            client,
+            professional,
+            {"name": [{"family": "Müller"}], "birthDate": "1980-05-17"},
+            count={"valueInteger": 1},
+        )
+        assert response.json()["total"] == 1
+
+    def test_the_ahvn13_is_refused_here_too(self, client, professional, patients):
+        response = match(
+            client,
+            professional,
+            {"identifier": [{"system": f"urn:oid:{AHVN13_OID}", "value": AHVN_ERIKA}]},
+        )
+        assert response.status_code == 400
+
+    def test_a_patient_may_not_match(self, client, patient_only, patients):
+        response = match(
+            client,
+            patient_only,
+            {"name": [{"family": "Müller"}], "birthDate": "1980-05-17"},
+        )
+        assert response.status_code == 403
+
+    def test_input_without_identifier_or_demographics_is_400(
+        self, client, professional, patients
+    ):
+        response = match(client, professional, {"name": [{"family": "Müller"}]})
+        assert response.status_code == 400
+        assert outcome(response)["code"] == "required"

@@ -146,7 +146,14 @@ def capability_statement(container: ContainerDep):
                                         "http://profiles.ihe.net/ITI/PIXm/"
                                         "OperationDefinition/IHE.PIXm.pix"
                                     ),
-                                }
+                                },
+                                {
+                                    "name": "match",
+                                    "definition": (
+                                        "http://profiles.ihe.net/ITI/PDQm/"
+                                        "OperationDefinition/PDQmMatch"
+                                    ),
+                                },
                             ],
                         }
                     ],
@@ -232,6 +239,80 @@ def pdq_search(
                     "search": {"mode": "match"},
                 }
                 for record in records
+            ],
+        }
+    )
+
+
+MATCH_GRADE = "http://hl7.org/fhir/StructureDefinition/match-grade"
+
+
+@router.post("/Patient/$match")
+async def pdq_match(
+    request: Request,
+    user: CurrentUserDep,
+    db: DbDep,
+    container: ContainerDep,
+):
+    """ITI-119: score candidates for a Patient resource the caller posts.
+
+    The form the CH EPR FHIR guide (v5) selects for patient identification.
+    Input is a ``Parameters`` resource with ``resource`` (a Patient),
+    optional ``onlyCertainMatches`` and ``count``.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return operation_outcome(DirectoryError(400, "invalid", "body is not JSON"))
+    if body.get("resourceType") != "Parameters":
+        return operation_outcome(
+            DirectoryError(400, "invalid", "$match expects a Parameters resource")
+        )
+    by_name = {p.get("name"): p for p in body.get("parameter") or []}
+    patient = (by_name.get("resource") or {}).get("resource") or {}
+    if patient.get("resourceType") != "Patient":
+        return operation_outcome(
+            DirectoryError(400, "required", "parameter 'resource' must hold a Patient")
+        )
+    only_certain = bool((by_name.get("onlyCertainMatches") or {}).get("valueBoolean"))
+    count = (by_name.get("count") or {}).get("valueInteger")
+    name = (patient.get("name") or [{}])[0]
+    try:
+        matches = container.directory.match(
+            db,
+            user.actor,
+            identifiers=[
+                f"{i.get('system', '')}|{i.get('value', '')}"
+                for i in patient.get("identifier") or []
+            ],
+            family=name.get("family"),
+            given=" ".join(name.get("given") or []) or None,
+            birthdate=_parse_birthdate(patient.get("birthDate")),
+            gender=patient.get("gender"),
+            only_certain=only_certain,
+            count=count if isinstance(count, int) and count > 0 else None,
+        )
+    except DirectoryError as error:
+        db.commit()
+        return operation_outcome(error)
+    base = _base(request)
+    community = container.directory.community_oid
+    return _fhir(
+        {
+            "resourceType": "Bundle",
+            "type": "searchset",
+            "total": len(matches),
+            "entry": [
+                {
+                    "fullUrl": f"{base}/Patient/{record.uid}",
+                    "resource": patient_resource(record, community),
+                    "search": {
+                        "mode": "match",
+                        "score": score,
+                        "extension": [{"url": MATCH_GRADE, "valueCode": grade}],
+                    },
+                }
+                for record, score, grade in matches
             ],
         }
     )

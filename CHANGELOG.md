@@ -34,6 +34,19 @@ writes atomically, never overwrites, and refuses keys that could escape its
 directory. Production requires `EHEALTH_DOCUMENT_STORE_PATH`.
 `GET /v1/dossiers/{uid}/documents/{doc}/content` returns the bytes.
 
+**PDQm `$match` (ITI-119)**: `POST /v1/fhir/Patient/$match`, the
+patient-identification form that CH EPR FHIR v5.0.0 selects. The caller posts
+a Patient resource and gets back candidates, each with a score and a FHIR
+match grade. Deliberately conservative, because a false match files one
+person's results under another's name:
+- *certain* only for an identifier this directory knows;
+- *probable* needs family name, birth date and given name to agree;
+- *possible* is family name and birth date alone;
+- a contradicting gender rules a candidate out;
+- `onlyCertainMatches` returns nothing rather than one of two conflicting
+  certain answers.
+Removing the "demographics are never certain" rule makes a test fail.
+
 **Retention (EPDV art. 10)**: `make retention [APPLY=1]` destroys the
 health data of dossiers past their retention horizon. It is a dry run by
 default. It removes document contents, document titles, medication free

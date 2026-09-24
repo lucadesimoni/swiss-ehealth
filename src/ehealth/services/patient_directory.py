@@ -327,6 +327,105 @@ class PatientDirectory:
         )
         return records
 
+    # -- ITI-119: demographic match -------------------------------------------
+
+    def match(
+        self,
+        session: Session,
+        actor: ActorContext,
+        *,
+        identifiers: list[str],
+        family: str | None,
+        given: str | None,
+        birthdate: date | None,
+        gender: str | None,
+        only_certain: bool = False,
+        count: int | None = None,
+    ) -> list[tuple[PatientRecord, float, str]]:
+        """Score candidates for a Patient the caller describes.
+
+        Returns ``(record, score, grade)`` with grade ``certain``, ``probable``
+        or ``possible`` (the FHIR match-grade codes), best first.
+
+        Deliberately conservative, because a false match in a health record
+        files one person's results under another:
+
+        * **certain** only on an identifier this directory issued or knows —
+          the EPR-SPID or our patient id. Demographics alone are never
+          certain: two people can share a name and a birthday.
+        * **probable** needs family name *and* birth date *and* given name to
+          agree, with no contradicting gender.
+        * **possible** is family name and birth date only.
+
+        Candidates come only from an identifier or from the blind index over
+        (family name, birth date), exactly as ITI-78 — so a $match is no
+        wider a net than a search.
+        """
+        self.require_professional(session, actor)
+        if gender is not None and gender not in FHIR_GENDERS:
+            raise DirectoryError(400, "code-invalid", f"unknown gender {gender!r}")
+
+        scored: dict[str, tuple[Person, float, str]] = {}
+        for token in identifiers:
+            oid, value = parse_token(token)
+            if oid == AHVN13_OID:
+                self._check_domain(oid, role="source")
+            if oid not in self.domains:
+                continue  # an identifier from another domain is not evidence
+            person = self._find(session, oid, value)
+            if person is not None:
+                scored[person.uid] = (person, 1.0, "certain")
+
+        if family and birthdate is not None:
+            index = self._identity.demographic_index(family, birthdate)
+            wanted_given = normalise_family_name(given) if given else None
+            for person in session.execute(
+                select(Person).where(Person.demographic_index == index)
+            ).scalars():
+                if person.uid in scored or not self._is_patient(session, person):
+                    continue
+                record_gender = fhir_gender(person.administrative_sex)
+                if gender and record_gender not in (gender, "unknown"):
+                    continue  # a contradiction rules the candidate out
+                view_given = self._persons.view(session, person).given_name
+                if wanted_given and _given_matches(view_given, wanted_given):
+                    scored[person.uid] = (person, 0.9, "probable")
+                else:
+                    scored[person.uid] = (person, 0.6, "possible")
+        elif not identifiers:
+            raise DirectoryError(
+                400,
+                "required",
+                "$match needs an identifier, or family name and birth date",
+            )
+
+        ranked = sorted(scored.values(), key=lambda item: -item[1])
+        if only_certain:
+            ranked = [item for item in ranked if item[2] == "certain"]
+            if len(ranked) > 1:
+                # Two "certain" answers mean the identifiers disagree about
+                # who this is; that needs a person, not a guess.
+                ranked = []
+        if count is not None:
+            ranked = ranked[:count]
+        if len(ranked) > self._max_results:
+            raise DirectoryError(
+                400,
+                "too-costly",
+                f"more than {self._max_results} candidates; narrow the input",
+            )
+        self._audit(
+            session,
+            actor,
+            AuditAction.PATIENT_SEARCHED,
+            len(ranked),
+            ranked[0][0].uid if len(ranked) == 1 else None,
+        )
+        return [
+            (self._record(session, person), score, grade)
+            for person, score, grade in ranked
+        ]
+
     def read(self, session: Session, actor: ActorContext, uid: str) -> PatientRecord:
         """``GET Patient/{id}`` — the id being our local patient id."""
         self.require_professional(session, actor)
