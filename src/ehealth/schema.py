@@ -22,6 +22,7 @@ Both are one-line fixes when caught at boot and expensive when caught later.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import Engine, Integer, String, Table, inspect, select, text
@@ -63,6 +64,8 @@ DEFAULT_LOCK_TIMEOUT = "5s"
 STATEMENT_TIMEOUT_ENV_VAR = "EHEALTH_MIGRATION_STATEMENT_TIMEOUT"
 DEFAULT_STATEMENT_TIMEOUT = "0"
 
+_DURATION = re.compile(r"\d{1,9}(ms|s|min|h)?")
+
 
 def guard_migration(connection) -> None:
     """Take the migration lock and bound how long locks are waited for.
@@ -97,8 +100,12 @@ def guard_migration(connection) -> None:
     statement_timeout = os.environ.get(
         STATEMENT_TIMEOUT_ENV_VAR, DEFAULT_STATEMENT_TIMEOUT
     )
-    # Quoted as literals rather than bound parameters: SET does not accept
-    # placeholders. The values come from the deployer's own environment.
+    # SET does not accept bound parameters, so the values are interpolated —
+    # and therefore validated first, even though they come from the
+    # deployer's own environment. A PostgreSQL duration: digits and a unit.
+    for name, value in (("lock", lock_timeout), ("statement", statement_timeout)):
+        if not _DURATION.fullmatch(value):
+            raise ValueError(f"invalid {name} timeout {value!r}; use e.g. 5s or 500ms")
     connection.execute(text(f"set lock_timeout = '{lock_timeout}'"))
     connection.execute(text(f"set statement_timeout = '{statement_timeout}'"))
 

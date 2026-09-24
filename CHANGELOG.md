@@ -70,6 +70,17 @@ verified. CI runs the load test and then the rehearsal on every push.
 
 ### Fixed
 
+- **Unbounded request bodies (security).** Request bodies were read in full
+  before authentication, because FastAPI resolves body parameters alongside
+  dependencies. An anonymous client could therefore send gigabytes to a
+  public endpoint such as `/v1/auth/callback` and exhaust the server's memory.
+  An ASGI middleware now refuses any body over 1 MiB (48 MiB on the two
+  document routes) with `413`. It checks `Content-Length` before reading
+  anything, counts chunked bodies as they stream in, and refuses a
+  non-numeric length. Removing the middleware makes three tests fail.
+- **Migration timeouts were interpolated into SQL unvalidated.** They come
+  from the operator's environment, but `SET` takes no bound parameters, so
+  they are now checked against a duration pattern first.
 - **A failed commit was reported as success.** With FastAPI's default
   dependency scope the transaction committed *after* the handler's response
   had been built. A commit that failed there, from a serialisation conflict

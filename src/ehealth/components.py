@@ -145,6 +145,7 @@ COMPONENTS: tuple[Component, ...] = (
             "components.py",
             "api/__init__.py",
             "api/deps.py",
+            "api/limits.py",
             "api/schemas.py",
             "services/__init__.py",
             "scripts/",

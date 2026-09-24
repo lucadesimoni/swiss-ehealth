@@ -31,6 +31,7 @@ from ehealth.api import (
     routes_offline,
     routes_persons,
 )
+from ehealth.api.limits import BodySizeLimit
 from ehealth.config import Environment, Settings, get_settings
 from ehealth.container import Container, build_container, get_container
 from ehealth.db import create_all, init_engine
@@ -38,7 +39,7 @@ from ehealth.domain.uid import new_uid
 from ehealth.schema import require_matching_schema
 from ehealth.services.access import AccessError
 from ehealth.services.auth import AuthError
-from ehealth.version import API_VERSION
+from ehealth.version import API_VERSION, __version__
 
 logger = logging.getLogger("ehealth")
 
@@ -147,7 +148,7 @@ def create_app(
 
     app = FastAPI(
         title="Swiss e-health patient dossier",
-        version="0.1.0",
+        version=__version__,
         summary=(
             "AHVN13-derived pseudonymous UIDs, capability tokens, "
             "tamper-evident change tracking"
@@ -168,6 +169,9 @@ def create_app(
             response.headers.setdefault(header, value)
         response.headers["X-Request-Id"] = request_id
         return response
+
+    # Outermost, so an oversized body is refused before anything reads it.
+    app.add_middleware(BodySizeLimit)
 
     @app.exception_handler(AccessError)
     async def _access_denied(request: Request, exc: AccessError) -> JSONResponse:
