@@ -89,7 +89,7 @@ see the evidence, not just the claim.
 | Emergency access, recorded and notifiable | Recorded yes; notification transport no | `TestEmergency` |
 | Patients can see who accessed their record | Yes (`GET /audit/me`) | end-to-end test, step 7 |
 | Tamper-evident, verifiable audit trail | Yes: signed hash chains, anchors, verification endpoint | `tests/test_audit_ledger.py` |
-| 20-year retention horizon | Modelled (`retention_until`); deletion jobs not built | `test_opens_with_a_retention_horizon` |
+| 20-year retention horizon | Yes: `retention_until`, and a purge job (`make retention`, dry run by default) that keeps the audit trail intact | `test_opens_with_a_retention_horizon`, `tests/test_retention.py` |
 | Authentication at a required level of assurance, two factors | Yes, per provider. Production refuses to start without it. | `tests/test_login_policy.py`, `tests/test_oidc_provider.py` |
 | Professionals identified by GLN and register, licence checked on every write | Yes. The register lookups themselves are not built. | `TestPrescribingAuthority`, `TestCredentials` |
 | Encryption of direct identifiers, keys by purpose and version | Yes | `tests/test_crypto_and_identity.py` |

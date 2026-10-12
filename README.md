@@ -422,6 +422,8 @@ src/ehealth/
 
 ## What is deliberately not built
 
+The full plan to real patient data, in order, is in [`ROADMAP.md`](ROADMAP.md).
+
 Stated plainly so nobody mistakes a stub for a feature:
 
 - **An S3 backend for documents.** Contents are stored encrypted on a local
